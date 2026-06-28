@@ -136,15 +136,43 @@ AI_TIMEOUT=240
 python -m bridge.main
 ```
 
-### 5. Start a game
+### 5. Configure and start a game
 
-Load Factorio, start or load a save, then open **Mod Settings → Map** to configure:
-- Provider, model name, LM Studio URL
+Load Factorio, start or load a save, then open **Settings → Mod settings → Map** to configure:
+- Provider, model name, LM Studio URL (`ai-player-provider`, `ai-player-model-name`, `ai-player-lm-studio-url`)
+- OpenAI/custom endpoint keys and base URLs
 - RCON host/port/password (alternative to bridge/.env — values here hot-reload without restarting the bridge)
 - Tick interval (how often the AI acts, in ticks; default 300 = ~5 seconds)
-- Vision radius, chat enable/disable
+- Vision radius, chat enable/disable, auto-respawn, debug-chat logging
 
-The AI character will spawn automatically once a bridge response is received. You can also toggle co-op mode (AI joins your force) vs. solo mode (AI on its own force) from mod settings.
+### 6. Spawn the AI character
+
+In the in-game console (`~` key), run:
+
+```
+/spawn-ai-player
+```
+
+The character spawns on the `nauvis` surface. With the bridge running, it begins acting on the next tick interval. Use `/ai-coop on` if you want it to join your force and help expand your base (see [Console commands](#console-commands)).
+
+---
+
+## Console commands
+
+Run these from the in-game console (press `~`). The AI does **not** spawn automatically — start it with `/spawn-ai-player`.
+
+| Command | Description |
+|---|---|
+| `/spawn-ai-player` | Spawn or reset the AI character. Run this first. |
+| `/remove-ai-player` | Destroy the AI character. |
+| `/goto-ai-player` | Teleport yourself to the AI. |
+| `/ai-come` | Bring the AI character to you. |
+| `/ai-coop on\|off` | Switch between co-op (AI shares your force, sees and expands your base) and solo (AI on its own force). Default is co-op. |
+| `/ai-do <skill> [arg] [count\|output]` | Run a skill **deterministically, bypassing the LLM** — e.g. `/ai-do build_miner iron-ore`. Useful for testing skills with no bridge running. |
+| `/ai-force <skill> [args]` \| `/ai-force off` | Lock the LLM router to a single skill until cleared. |
+| `/ai-collect` | (Solo only) AI mines back every building it placed, then returns to you. Refused in co-op mode to avoid mining the shared base. |
+
+> **Run without an LLM:** `/ai-do` executes any skill directly through the mod, so you can drive the AI character entirely from the console without the bridge or a model. The bridge is only required for autonomous LLM-driven play.
 
 ---
 
@@ -191,14 +219,30 @@ Primitive actions (`place`, `mine`, `craft`, `insert`, `take`, `chat`, `wait`, �
 
 ## MCP server (optional)
 
-The bridge includes an MCP server that exposes Factorio game state and actions to any MCP client (Claude Code, Claude Desktop, etc.):
+The bridge includes an MCP server that exposes Factorio to any MCP client (Claude Code, Claude Desktop, etc.) over stdio. Instead of the mod pushing requests to an LLM, the client *pulls* — reading game state and driving the AI character through the same skill layer on demand.
 
 ```bash
 pip install "mcp[cli]"
 python -m bridge.factorio.mcp_server
 ```
 
-Uses the same `bridge/.env` credentials as the bridge. Add it to your MCP client config (e.g. `claude_desktop_config.json` or Claude Code settings) pointing at the stdio server.
+It uses the same `bridge/.env` credentials as the bridge — no extra configuration. Register it with your MCP client as a stdio server, e.g. in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "factorio": {
+      "command": "python",
+      "args": ["-m", "bridge.factorio.mcp_server"],
+      "cwd": "/path/to/ai-player-v3"
+    }
+  }
+}
+```
+
+**Tools exposed:** read state (`get_factory_state`, `get_research`, `get_players`, `entities_near`, …), lifecycle (`spawn_ai_player`, `remove_ai_player`), the full skill set (`gather`, `build_miner`, `build_smelter`, `build_ghosts`, `deconstruct`, `loot_chests`, `deposit_to_chest`, `research`, `return_home`, `fuel_all`), and mode switches (`set_coop`, `set_autonomy`).
+
+> When driving the character externally through these tools, call `set_autonomy(false)` first so the mod's built-in LLM loop doesn't issue competing actions. Re-enable with `set_autonomy(true)` to hand control back. `run_lua` is a raw escape hatch — see [Security notes](#security-notes).
 
 ---
 
@@ -235,9 +279,10 @@ All settings can be provided via `bridge/.env` (secrets, paths) or the in-game *
 ## Requirements
 
 - Factorio 2.0+
-- Python 3.11+
+- Python 3.10+ (uses `X | None` type-hint syntax)
 - `factorio-rcon-py`, `openai`, `anthropic` (see `requirements.txt`)
 - LM Studio, Ollama, or API keys for a cloud provider
+- Optional: `mcp[cli]` for the MCP server
 
 ---
 
