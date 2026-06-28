@@ -12,22 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read mod version
-        id: version
-        run: echo "version=$(jq -r .version mod/info.json)" >> "$GITHUB_OUTPUT"
-
       - name: Package mod zip
         run: |
-          MOD_NAME="ai-player-v3"
-          VERSION="${{ steps.version.outputs.version }}"
-          FOLDER="${MOD_NAME}_${VERSION}"
-          mkdir -p "dist/${FOLDER}"
-          cp -r mod/. "dist/${FOLDER}/"
+          mkdir -p dist/ai-player-v3
+          cp -r mod/. dist/ai-player-v3/
           cd dist
-          zip -r "${FOLDER}.zip" "${FOLDER}"
+          zip -r ai-player-v3.zip ai-player-v3
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/ai-player-v3_${{ steps.version.outputs.version }}.zip
+          files: dist/ai-player-v3.zip
           generate_release_notes: true
