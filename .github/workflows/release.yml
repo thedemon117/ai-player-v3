@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read mod version
+        id: version
+        run: echo "version=$(jq -r .version mod/info.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Package mod zip
+        run: |
+          MOD_NAME="ai-player-v3"
+          VERSION="${{ steps.version.outputs.version }}"
+          FOLDER="${MOD_NAME}_${VERSION}"
+          mkdir -p "dist/${FOLDER}"
+          cp -r mod/. "dist/${FOLDER}/"
+          cd dist
+          zip -r "${FOLDER}.zip" "${FOLDER}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ai-player-v3_${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
