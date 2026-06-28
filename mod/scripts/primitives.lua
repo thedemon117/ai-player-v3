@@ -495,7 +495,7 @@ local function action_chat(character, action)
   if not action.message then return end
   if settings.global["ai-player-enable-chat"] and
      settings.global["ai-player-enable-chat"].value then
-    game.print("[AI] " .. action.message, {r=0.8, g=1, b=0.8})
+    game.print(action.message, {r=0.8, g=1, b=0.8})
   end
 end
 

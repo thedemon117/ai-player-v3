@@ -276,13 +276,44 @@ function AIBrain.parse_actions(json_str)
   return actions
 end
 
+-- Extract a JSON string value for a named field, handling escape sequences.
+-- Returns nil if the field is not present.
+-- Flattens \n and \t to spaces so chat messages don't split into multiple
+-- game.print calls (Factorio renders embedded newlines as separate chat lines).
+local function json_extract_string(obj, field)
+  local _, pos = obj:find('"' .. field .. '":%s*"')
+  if not pos then return nil end
+  pos = pos + 1
+  local parts = {}
+  local i = pos
+  while i <= #obj do
+    local c = obj:sub(i, i)
+    if c == '"' then break
+    elseif c == '\\' then
+      i = i + 1
+      local e = obj:sub(i, i)
+      if     e == '"'  then parts[#parts+1] = '"'
+      elseif e == '\\' then parts[#parts+1] = '\\'
+      elseif e == 'n'  then parts[#parts+1] = ' '
+      elseif e == 'r'  then -- skip
+      elseif e == 't'  then parts[#parts+1] = ' '
+      else                  parts[#parts+1] = e
+      end
+    else
+      parts[#parts+1] = c
+    end
+    i = i + 1
+  end
+  return table.concat(parts)
+end
+
 function AIBrain.parse_action_object(obj_str)
   local action = {}
 
   -- String fields (primitive + skill params)
   for _, field in ipairs({"action","skill","direction","item","name","type","recipe",
                            "ore","output","message","text","title","inventory","slot"}) do
-    local val = obj_str:match('"' .. field .. '":%s*"([^"]*)"')
+    local val = json_extract_string(obj_str, field)
     if val then action[field] = val end
   end
 

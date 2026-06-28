@@ -65,17 +65,18 @@ class Agent:
             log_exchange(config.output_dir, req.req_id, messages, content, elapsed, None)
             return _fallback("could not parse a valid skill/action array from the model's reply")
 
-        entries = self._ensure_chat_ack(req, entries)
+        entries = self._label_chat(entries, provider_cfg.provider)
         log.info("Request %s: %d entr(ies) [%s]", req.req_id, len(entries),
                  ", ".join(e.get("skill") or e.get("action", "?") for e in entries))
         log_exchange(config.output_dir, req.req_id, messages, content, elapsed, entries)
         return entries
 
-    def _ensure_chat_ack(self, req: PendingRequest, entries: list[dict]) -> list[dict]:
-        """Guarantee a chat reply when the player spoke and the model didn't."""
-        user_message = req.payload.get("user_message")
-        if not user_message:
-            return entries
-        if any(e.get("action") == "chat" for e in entries):
-            return entries
-        return [{"action": "chat", "message": f"Got it: {user_message}"}] + entries
+    @staticmethod
+    def _label_chat(entries: list[dict], provider: str) -> list[dict]:
+        """Prefix each chat action's message with the provider name."""
+        labels = {"anthropic": "[Claude]", "openai": "[GPT]", "lmstudio": "[Local]", "custom": "[Custom]"}
+        label = labels.get(provider, "[AI]")
+        for e in entries:
+            if e.get("action") == "chat" and e.get("message"):
+                e["message"] = f"{label} {e['message']}"
+        return entries
