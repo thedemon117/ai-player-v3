@@ -18,6 +18,9 @@ __pycache__/
 .venv/
 venv/
 
+# Build artifacts (mod portal zip, built by .github/workflows/release.yml)
+dist/
+
 # OS / editor
 .DS_Store
 *.swp
