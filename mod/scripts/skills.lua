@@ -330,8 +330,28 @@ end
 local function skill_build_ghosts(character, _)
   local surface = character.surface
   local inv = inv_of(character)
-  local ghosts = surface.find_entities_filtered{type = "entity-ghost", position = character.position, radius = 96}
-  if #ghosts == 0 then return false, "build_ghosts: no ghosts within range to build" end
+  -- Search the ENTIRE surface — ghosts may be far from the character's current
+  -- position (e.g. an oil outpost blueprinted 200+ tiles away). We teleport to
+  -- the nearest ghost cluster before attempting revive.
+  local ghosts = surface.find_entities_filtered{type = "entity-ghost"}
+  if #ghosts == 0 then return false, "build_ghosts: no ghosts on surface to build" end
+
+  -- Find nearest ghost so we can teleport to it.
+  local nearest, nd = nil, math.huge
+  for _, g in ipairs(ghosts) do
+    if g.valid then
+      local dx = g.position.x - character.position.x
+      local dy = g.position.y - character.position.y
+      local d = dx * dx + dy * dy
+      if d < nd then nd = d; nearest = g end
+    end
+  end
+  if nearest then
+    -- Teleport to a spot near the nearest ghost cluster so revive() can fire.
+    local tp = surface.find_non_colliding_position(
+      "character", {x = nearest.position.x + 3, y = nearest.position.y + 3}, 12, 0.5)
+    if tp then character.teleport(tp) end
+  end
 
   local built = 0
   local missing = {}
@@ -497,6 +517,23 @@ local function skill_research(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- goto(position) — teleport the character to an arbitrary map coordinate.
+-- Use when you need to reach a location before performing other actions
+-- (e.g. inspecting a distant outpost or approaching a ghost cluster manually).
+-- -------------------------------------------------------------------------
+local function skill_goto(character, p)
+  local pos = p.position
+  if not pos or pos.x == nil or pos.y == nil then
+    return false, "goto: 'position' must be {x=N, y=N}"
+  end
+  local surface = character.surface
+  local target = {x = tonumber(pos.x), y = tonumber(pos.y)}
+  local safe = surface.find_non_colliding_position("character", target, 5, 0.5) or target
+  character.teleport(safe)
+  return true, string.format("moved to (%.0f, %.0f)", safe.x, safe.y)
+end
+
+-- -------------------------------------------------------------------------
 -- Registry + required params (mirrored in the bridge router prompt/validation)
 -- -------------------------------------------------------------------------
 AISkills.REGISTRY = {
@@ -510,6 +547,7 @@ AISkills.REGISTRY = {
   deposit_to_chest = skill_deposit_to_chest,
   return_home      = skill_return_home,
   research         = skill_research,
+  goto             = skill_goto,
 }
 
 -- -------------------------------------------------------------------------

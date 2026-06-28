@@ -47,8 +47,11 @@ SKILLS: dict[str, list[str]] = {
     "build_miner":   [],
     "build_smelter": [],
     "fuel_all":      [],
+    "loot_chests":   [],
+    "deposit_to_chest": [],
     "return_home":   [],
     "research":      [],
+    "goto":          ["position"],
 }
 
 # Directions the move action accepts

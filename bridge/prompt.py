@@ -26,6 +26,7 @@ Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no 
 - {"skill":"fuel_all"}                Top up every nearby burner that's low on fuel (uses your coal).
 - {"skill":"research"[,"tech":"automation"]}   Queue a technology on your force (picks one if you omit tech). REQUIRED before any research can progress — a lab does NOTHING until research is queued.
 - {"skill":"return_home"}             Walk back to your base anchor (use if you've wandered far).
+- {"skill":"goto","position":{"x":N,"y":N}}   Teleport to any map coordinate. Use to reach a distant location (e.g. an oil outpost) before acting. build_ghosts auto-travels to ghost clusters, so only use goto for manual positioning.
 
 === PRIMITIVE ACTIONS (fallback only) ===
 move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,direction]}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}.
@@ -98,18 +99,22 @@ def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
     # Hard gate, placed LAST for recency: small models ignore priority rules buried
     # mid-prompt, so restate the mandate as the final instruction they read.
     # Priority order: ghosts > deconstruction (both physical human intent) > force_skill.
-    ghosts = perception.get("ghosts") or {}
-    decon = perception.get("deconstruction") or {}
+    # NOTE: factory_state returns ghosts/deconstruction as plain integers; gather_perception
+    # returns them as {count, list} dicts. Handle both forms.
+    _ghosts_raw = perception.get("ghosts") or 0
+    _decon_raw  = perception.get("deconstruction") or 0
+    ghost_count = _ghosts_raw.get("count", 0) if isinstance(_ghosts_raw, dict) else int(_ghosts_raw)
+    decon_count = _decon_raw.get("count", 0)  if isinstance(_decon_raw,  dict) else int(_decon_raw)
     forced = mem.get("force_skill")
-    if ghosts.get("count", 0) > 0:
+    if ghost_count > 0:
         parts.append(
-            f'IMPORTANT: there are {ghosts["count"]} ghost(s) the human placed for you to build. '
+            f'IMPORTANT: there are {ghost_count} ghost(s) the human placed for you to build. '
             'Your response MUST be exactly [{"skill":"build_ghosts"}] and nothing else — '
             'build what the human asked for before doing anything else.'
         )
-    elif decon.get("count", 0) > 0:
+    elif decon_count > 0:
         parts.append(
-            f'IMPORTANT: the human marked {decon["count"]} object(s) for deconstruction. '
+            f'IMPORTANT: the human marked {decon_count} object(s) for deconstruction. '
             'Your response MUST be exactly [{"skill":"deconstruct"}] and nothing else — '
             'clearing what the human flagged comes before everything except building ghosts.'
         )

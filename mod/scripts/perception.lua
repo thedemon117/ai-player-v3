@@ -521,7 +521,9 @@ function AIPerception.gather(character)
   perception.power = compute_power(surface, force, factory.by_status)
 
   -- Human-placed entity-ghosts = explicit build intent (build_ghosts skill).
-  local ghost_entities = surface.find_entities_filtered{type = "entity-ghost", position = pos, radius = 96}
+  -- Search the ENTIRE surface: ghosts can be far from the character (e.g. an oil
+  -- outpost the human blueprinted 200+ tiles away). build_ghosts teleports there.
+  local ghost_entities = surface.find_entities_filtered{type = "entity-ghost"}
   local ghost_list = {}
   for _, g in ipairs(ghost_entities) do
     if g.valid and #ghost_list < 25 then
@@ -539,7 +541,7 @@ function AIPerception.gather(character)
 
   -- Human-marked deconstruction = explicit "remove this" intent (deconstruct
   -- skill). Second-highest priority after ghosts. Mirrors the ghost block.
-  local decon_entities = surface.find_entities_filtered{to_be_deconstructed = true, position = pos, radius = 96}
+  local decon_entities = surface.find_entities_filtered{to_be_deconstructed = true}
   local decon_list = {}
   for _, m in ipairs(decon_entities) do
     if m.valid and #decon_list < 25 then
@@ -602,8 +604,8 @@ function AIPerception.factory_state(character)
     },
     factory    = factory,        -- total, by_type, by_status, attention[, machines roster if small]
     needs      = needs_counts,   -- bucket -> count of machines needing that action
-    ghosts          = surface.count_entities_filtered{type = "entity-ghost", position = pos, radius = 96},
-    deconstruction  = surface.count_entities_filtered{to_be_deconstructed = true, position = pos, radius = 96},
+    ghosts          = surface.count_entities_filtered{type = "entity-ghost"},
+    deconstruction  = surface.count_entities_filtered{to_be_deconstructed = true},
   }
 end
 
