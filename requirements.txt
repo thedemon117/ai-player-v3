@@ -1,0 +1,10 @@
+# Factorio ai-player-v2 bridge dependencies
+
+# RCON client for sending commands to Factorio
+factorio-rcon-py>=0.0.4
+
+# LM Studio, Ollama, OpenAI, and any OpenAI-compatible endpoint
+openai>=1.0.0
+
+# Claude (Opus, Sonnet, Haiku) — optional if only using local providers
+anthropic>=0.25.0

@@ -1,0 +1,12 @@
+{
+  "name": "ai-player-v3",
+  "version": "0.3.1",
+  "title": "AI Player v3 (skills)",
+  "author": "ob_105",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0"
+  ],
+  "description": "Skill-based autonomous AI player for Factorio 2.0. The mod implements deterministic skills (basic loops) + primitive actions; an external bridge runs a small LLM router that picks skills/params and returns them via RCON.",
+  "homepage": ""
+}
