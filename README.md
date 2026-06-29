@@ -274,6 +274,8 @@ All settings can be provided via `bridge/.env` (secrets, paths) or the in-game *
 - The MCP server's `run_lua` tool executes arbitrary Lua in your Factorio game. Only expose it to trusted clients on a local network.
 - RCON has no TLS. Use it on localhost or a trusted LAN only.
 
+- Software is provided with no warranty, and the software author/license owner cannot be held liable for any damages.
+
 ---
 
 ## Requirements
