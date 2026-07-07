@@ -547,7 +547,7 @@ AISkills.REGISTRY = {
   deposit_to_chest = skill_deposit_to_chest,
   return_home      = skill_return_home,
   research         = skill_research,
-  goto             = skill_goto,
+  ["goto"]         = skill_goto,
 }
 
 -- -------------------------------------------------------------------------
