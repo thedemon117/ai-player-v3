@@ -24,3 +24,6 @@ dist/
 # OS / editor
 .DS_Store
 *.swp
+
+# Local dev dedicated-server write dir (saves, config, logs)
+server/

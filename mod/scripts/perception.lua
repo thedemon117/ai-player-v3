@@ -212,6 +212,43 @@ local function compute_power(surface, force, by_status)
   return power
 end
 
+-- Production statistics — the canonical "is the factory growing" signal.
+-- All-time totals + last-minute rates for a small whitelist of milestone
+-- items, plus researched-tech count. Compact by design (only nonzero items)
+-- so it stays cheap in the prompt; the bridge's metrics.jsonl also snapshots
+-- it per turn for run evaluation (bridge/metrics.py, bridge/report.py).
+local PRODUCTION_ITEMS = {
+  "wood", "coal", "stone", "iron-ore", "copper-ore",
+  "iron-plate", "copper-plate", "stone-brick", "steel-plate",
+  "iron-gear-wheel", "copper-cable", "electronic-circuit",
+  "automation-science-pack", "logistic-science-pack", "military-science-pack",
+  "chemical-science-pack", "production-science-pack", "utility-science-pack",
+  "space-science-pack",
+}
+
+local function compute_production(force, surface)
+  local production = {items = {}}
+  pcall(function()
+    local stats = force.get_item_production_statistics(surface)
+    local idx = defines.flow_precision_index.one_minute
+    for _, name in ipairs(PRODUCTION_ITEMS) do
+      local total = stats.get_input_count(name)
+      if total and total > 0 then
+        local per_min = stats.get_flow_count{
+          name = name, category = "input", precision_index = idx, count = true,
+        }
+        production.items[name] = {total = total, per_min = math.floor(per_min + 0.5)}
+      end
+    end
+  end)
+  local researched = 0
+  for _, t in pairs(force.technologies) do
+    if t.researched then researched = researched + 1 end
+  end
+  production.techs_researched = researched
+  return production
+end
+
 -- -------------------------------------------------------------------------
 -- Whole-base machine view (scale-aware). One force-wide scan yields:
 --   * aggregate counts by_type and by_status (always cheap to read)
@@ -519,6 +556,7 @@ function AIPerception.gather(character)
   perception.factory = factory
   perception.needs = needs
   perception.power = compute_power(surface, force, factory.by_status)
+  perception.production = compute_production(force, surface)
 
   -- Human-placed entity-ghosts = explicit build intent (build_ghosts skill).
   -- Search the ENTIRE surface: ghosts can be far from the character (e.g. an oil
@@ -603,6 +641,7 @@ function AIPerception.factory_state(character)
       progress = cur and round1(force.research_progress * 100) or 0,
     },
     factory    = factory,        -- total, by_type, by_status, attention[, machines roster if small]
+    production = compute_production(force, surface),
     needs      = needs_counts,   -- bucket -> count of machines needing that action
     ghosts          = surface.count_entities_filtered{type = "entity-ghost"},
     deconstruction  = surface.count_entities_filtered{to_be_deconstructed = true},
