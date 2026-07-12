@@ -67,7 +67,7 @@ bridge/                 Python bridge — run this alongside Factorio
 
 ### 1. Install the mod
 
-Download `ai-player-v3.zip` from [Releases](../../releases) and place it in your Factorio mods directory, or install directly from the [Factorio mod portal](https://mods.factorio.com/).
+Install from the [Factorio mod portal](https://mods.factorio.com/), or build the zip yourself from this repo (`mkdir -p dist/ai-player-v3 && cp -r mod/. dist/ai-player-v3/ && cd dist && zip -r ai-player-v3.zip ai-player-v3`) and place it in your Factorio mods directory.
 
 The mod directory is:
 - **macOS:** `~/Library/Application Support/factorio/mods/`
