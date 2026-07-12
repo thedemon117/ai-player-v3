@@ -406,6 +406,24 @@ commands.add_command("remove-ai-player", "Destroy the AI player character",
   end
 )
 
+-- A free spot BESIDE `target` (never on top of it). Characters don't collide
+-- with each other, so find_non_colliding_position happily returns the target's
+-- exact position — landing a teleport there stacks the two characters and can
+-- trap the human under an AI that isn't moving. Search adjacent offsets and
+-- reject anything closer than 1 tile.
+local function position_beside(surface, target)
+  local offsets = {{1.5,0},{-1.5,0},{0,1.5},{0,-1.5},{1.5,1.5},{-1.5,-1.5},{1.5,-1.5},{-1.5,1.5}}
+  for _, off in ipairs(offsets) do
+    local pos = surface.find_non_colliding_position("character",
+      {target.x + off[1], target.y + off[2]}, 4, 0.25)
+    if pos then
+      local dx, dy = pos.x - target.x, pos.y - target.y
+      if (dx*dx + dy*dy) >= 1 then return pos end
+    end
+  end
+  return target  -- fully enclosed target; overlap beats a failed teleport
+end
+
 commands.add_command("goto-ai-player", "Teleport to the AI player",
   function(cmd)
     if not storage.ai_player then return end
@@ -415,7 +433,7 @@ commands.add_command("goto-ai-player", "Teleport to the AI player",
     end
     local player = game.get_player(cmd.player_index)
     if player then
-      player.teleport(character.position, character.surface)
+      player.teleport(position_beside(character.surface, character.position), character.surface)
     end
   end
 )
@@ -445,9 +463,7 @@ commands.add_command("ai-come", "Bring the AI character to you",
     local player = game.get_player(cmd.player_index)
     if player and player.character then
       local ps = player.character.surface
-      local pos = ps.find_non_colliding_position("character", player.character.position, 10, 0.5)
-        or player.character.position
-      character.teleport(pos, ps)
+      character.teleport(position_beside(ps, player.character.position), ps)
       game.print("[AI] Coming to you", {r=0,g=1,b=1})
     end
   end
@@ -484,9 +500,7 @@ commands.add_command("ai-collect",
     local player = game.get_player(cmd.player_index)
     if player and player.character then
       local ps = player.character.surface
-      local pos = ps.find_non_colliding_position("character", player.character.position, 10, 0.5)
-        or player.character.position
-      character.teleport(pos, ps)
+      character.teleport(position_beside(ps, player.character.position), ps)
       game.print("[AI] Returned to you", {r=0, g=1, b=1})
     end
   end
