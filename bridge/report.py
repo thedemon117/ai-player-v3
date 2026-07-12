@@ -54,12 +54,14 @@ def _load(paths: list[Path]) -> list[dict]:
 
 
 def _fmt_ticks(ticks) -> str:
-    """Game ticks → wall-ish time (60 ticks/s)."""
+    """Game ticks → wall-ish time (60 ticks/s), with explicit units."""
     if ticks is None:
         return "—"
     seconds = int(ticks // 60)
     h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    return f"{m}m {s:02d}s"
 
 
 def _pct(part: int, whole: int) -> str:

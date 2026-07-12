@@ -64,6 +64,18 @@ PHASE_HINT = {
 }
 
 
+def _failed_detail(results, name: str) -> str | None:
+    """Detail of a FAILED entry for skill/action `name` in last turn's results."""
+    for r in results or []:
+        if not isinstance(r, dict) or r.get("ok"):
+            continue
+        label = r.get("skill") or r.get("action") or ""
+        detail = str(r.get("detail") or "")
+        if label == name or detail.startswith(name):
+            return detail or label
+    return None
+
+
 def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
     system = SYSTEM_PROMPT
     if system_prefix:
@@ -106,11 +118,22 @@ def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
     ghost_count = _ghosts_raw.get("count", 0) if isinstance(_ghosts_raw, dict) else int(_ghosts_raw)
     decon_count = _decon_raw.get("count", 0)  if isinstance(_decon_raw,  dict) else int(_decon_raw)
     forced = mem.get("force_skill")
-    if ghost_count > 0:
+    # Escape hatch: if the previous turn's build_ghosts FAILED (e.g. "no buildable
+    # ghosts" — missing items), forcing it again would loop forever. Release the
+    # gate for this turn so the model can gather/craft what the ghosts need.
+    ghost_blocked = _failed_detail(results, "build_ghosts")
+    if ghost_count > 0 and ghost_blocked is None:
         parts.append(
             f'IMPORTANT: there are {ghost_count} ghost(s) the human placed for you to build. '
             'Your response MUST be exactly [{"skill":"build_ghosts"}] and nothing else — '
             'build what the human asked for before doing anything else.'
+        )
+    elif ghost_count > 0:
+        parts.append(
+            f'NOTE: {ghost_count} ghost(s) are waiting, but your last build_ghosts attempt '
+            f'FAILED ("{ghost_blocked}"). Do NOT call build_ghosts again this turn — '
+            'look at the ghost list in perception, then gather or craft the items those '
+            'ghosts need. Retry build_ghosts only once you have the items.'
         )
     elif decon_count > 0:
         parts.append(
