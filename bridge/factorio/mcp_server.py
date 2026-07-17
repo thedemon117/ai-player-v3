@@ -339,6 +339,164 @@ def set_coop(enabled: bool) -> str:
             if r.get("coop") else "SOLO (own force)")
 
 
+# ----------------------------------------------------------------------
+# Query tools — read-only world/prototype lookups via the mod's query
+# registry (mod/scripts/queries.lua). Unlike the generic reads above, these
+# run inside the mod (remote interface), so they can reuse the same
+# perception code the autonomous router uses. All return JSON.
+# ----------------------------------------------------------------------
+
+def _query(name: str, **params) -> str:
+    """Run a mod query and return its result as JSON. Drops None params."""
+    params = {k: v for k, v in params.items() if v is not None}
+    with _LOCK:
+        r = _GW.run_query(name, params)
+    return json.dumps(r, indent=2, sort_keys=True)
+
+
+@mcp.tool()
+def get_recipe(name: str) -> str:
+    """Recipe details: ingredients, products, craft time (energy, in seconds at
+    speed 1), category, whether the force has it unlocked (enabled), and whether
+    a character can hand-craft it (hand_craftable — false means it needs a
+    machine, e.g. smelting needs a furnace). Use to plan multi-step crafts."""
+    return _query("get_recipe", name=name)
+
+
+@mcp.tool()
+def get_resource_patch(resource: str, x: float | None = None, y: float | None = None,
+                       radius: int = 48) -> str:
+    """Bounding box, tile count, and total amount of a resource patch around a
+    point (defaults to the AI character's position). resource: prototype name
+    (iron-ore, copper-ore, coal, stone, crude-oil). Use the bbox to plan drill
+    rows along the patch instead of guessing from the nearest tile."""
+    return _query("get_resource_patch", resource=resource, x=x, y=y, radius=radius)
+
+
+@mcp.tool()
+def can_place(entity: str, x: float, y: float, direction: str = "north") -> str:
+    """Check whether a manual build of `entity` at {x,y} would succeed, WITHOUT
+    placing anything. Runs the same checks as place_entity (special rules like
+    drill-on-resource and pump-on-water, then the engine's manual build check),
+    so can_place=true means a subsequent place_entity will not be rejected.
+    direction: north/south/east/west."""
+    return _query("can_place", entity=entity, x=x, y=y, direction=direction)
+
+
+@mcp.tool()
+def nearest_buildable(entity: str, x: float | None = None, y: float | None = None,
+                      radius: int = 32) -> str:
+    """Nearest clear position where `entity` fits, spiralling out from a point
+    (defaults to the AI character's position). Collision-only: for entities with
+    placement rules beyond collision (mining drills need a resource patch,
+    offshore pumps need water) plan with get_resource_patch/can_place instead."""
+    return _query("nearest_buildable", entity=entity, x=x, y=y, radius=radius)
+
+
+@mcp.tool()
+def inspect_entity(x: float, y: float, name: str = "", radius: int = 4) -> str:
+    """Full perception-grade detail of the entity nearest {x,y}: status, recipe,
+    fuel/input/output contents, chest/lab/turret contents, fluid connection
+    points, health, direction, and which inventory slots it has — the same view
+    the autonomous router sees. name: optionally restrict to one prototype."""
+    return _query("inspect_entity", x=x, y=y, name=name if name else None, radius=radius)
+
+
+@mcp.tool()
+def get_enemies(radius: int = 50, x: float | None = None, y: float | None = None) -> str:
+    """Enemies around a point (defaults to the AI character's position),
+    nearest-first with health and distance, plus a composition summary
+    (units/spawners/worms) and a threat_level (safe/caution/danger)."""
+    return _query("get_enemies", radius=radius, x=x, y=y)
+
+
+@mcp.tool()
+def get_character_state() -> str:
+    """Live embodiment state of the AI character: position, health, walking and
+    mining flags, home anchor distance, and the HAND-CRAFTING QUEUE with
+    progress — the only surface that shows what is mid-craft. Check this when a
+    craft was queued but the item never appeared."""
+    return _query("get_character_state")
+
+
+# ----------------------------------------------------------------------
+# Primitive tools — surgical Tier-0 actions via the mod's AIActions dispatch
+# (the same handlers the bridge LLM uses). Use these for one-off operations
+# no skill covers; prefer the skill tools for multi-step work. All require a
+# spawned character (spawn_ai_player first).
+# ----------------------------------------------------------------------
+
+def _primitive(action: str, **fields) -> str:
+    """Run one primitive action and format its ok/detail. Drops None fields."""
+    fields = {k: v for k, v in fields.items() if v is not None}
+    fields["action"] = action
+    with _LOCK:
+        r = _GW.run_primitive(fields)
+    return ("OK: " if r.get("ok") else "FAILED: ") + (r.get("detail") or "(no detail)")
+
+
+@mcp.tool()
+def place_entity(item: str, x: float, y: float, direction: str = "north") -> str:
+    """Place one `item` from the AI's inventory at {x,y} (validated as a legal
+    manual build first — use can_place to pre-check). direction: north/south/
+    east/west. Fails with the reason if the item is missing or the spot is
+    blocked/misaligned/on the wrong tile."""
+    return _primitive("place", item=item, position={"x": x, "y": y}, direction=direction)
+
+
+@mcp.tool()
+def mine_entity(x: float, y: float, name: str = "", type: str = "", radius: int = 4) -> str:
+    """Mine the nearest minable entity within `radius` of {x,y} into the AI's
+    inventory. Optionally filter by prototype `name` (e.g. 'stone-furnace') or
+    `type` (e.g. 'tree' — tree prototypes are never literally named 'tree').
+    One entity/resource unit per call; use the gather skill for bulk mining."""
+    return _primitive("mine", position={"x": x, "y": y},
+                      name=name if name else None, type=type if type else None,
+                      radius=radius)
+
+
+@mcp.tool()
+def craft_item(recipe: str, count: int = 1) -> str:
+    """Start hand-crafting `count` x `recipe` on the AI character. Only works
+    for hand-craftable recipes (get_recipe: hand_craftable) with ingredients on
+    hand. Crafting takes in-game time — poll get_character_state to see the
+    queue drain."""
+    return _primitive("craft", recipe=recipe, count=count)
+
+
+@mcp.tool()
+def set_recipe(recipe: str, x: float, y: float) -> str:
+    """Set the recipe on the assembling machine / furnace nearest {x,y}. Needed
+    before an assembler will accept ingredients."""
+    return _primitive("set_recipe", recipe=recipe, position={"x": x, "y": y})
+
+
+@mcp.tool()
+def insert_items(item: str, count: int, x: float, y: float, slot: str = "") -> str:
+    """Move `count` x `item` from the AI's inventory into the building nearest
+    {x,y}. slot: fuel / input / output / chest / lab / ammo (empty = guess from
+    the entity type). E.g. coal goes in 'fuel', ore in 'input'. Fails with the
+    reason if the AI lacks the item or the target slot won't accept it."""
+    return _primitive("insert", item=item, count=count, position={"x": x, "y": y},
+                      inventory=slot if slot else None)
+
+
+@mcp.tool()
+def take_items(item: str, count: int, x: float, y: float, slot: str = "") -> str:
+    """Take `count` x `item` from the building nearest {x,y} into the AI's
+    inventory. slot: fuel / input / output / chest / lab / ammo (empty = guess).
+    E.g. take smelted plates from a furnace's 'output'."""
+    return _primitive("take", item=item, count=count, position={"x": x, "y": y},
+                      inventory=slot if slot else None)
+
+
+@mcp.tool()
+def say(message: str) -> str:
+    """Send a chat message to the game as the AI player (visible to everyone).
+    Respects the mod's 'enable chat' setting — if disabled, nothing is printed."""
+    return _primitive("chat", message=message)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     # Best-effort eager connect so the first tool call isn't slow; _send()

@@ -7,6 +7,7 @@ require("scripts.character")
 require("scripts.registry")
 require("scripts.perception")
 require("scripts.primitives")
+require("scripts.queries")
 require("scripts.brain")
 require("scripts.skills")
 
@@ -56,6 +57,33 @@ remote.add_interface("ai_player", {
   -- Returns { coop = bool, force = name } so the caller can confirm.
   set_coop = function(enabled)
     return AICharacter.set_coop(enabled == true)
+  end,
+  -- Read-only world/prototype query (queries.lua). name: query name;
+  -- params: table of query params. Works without a spawned character for
+  -- queries that take an explicit x/y. Returns the query's own table
+  -- ({error = ...} on failure).
+  query = function(name, params)
+    return AIQueries.run(name, params)
+  end,
+  -- Discovery: sorted list of valid query names.
+  list_queries = function()
+    return AIQueries.list()
+  end,
+  -- Run ONE primitive action (primitives.lua HANDLERS) against the AI
+  -- character — the same Tier-0 dispatch the bridge LLM uses, so an MCP
+  -- client can do surgical one-off operations (place/mine/craft/insert/take)
+  -- that no skill covers. action: table with an 'action' field plus the
+  -- handler's params (item/position/recipe/...).
+  run_primitive = function(action)
+    local character = AICharacter.get_character()
+    if not character then
+      return { ok = false, detail = "no ai character — /spawn-ai-player first" }
+    end
+    if type(action) ~= "table" or not action.action then
+      return { ok = false, detail = "action table with an 'action' field required" }
+    end
+    local ok, detail = AIActions.run(character, action)
+    return { ok = ok, detail = detail or "" }
   end,
 })
 

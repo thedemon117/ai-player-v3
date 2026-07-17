@@ -26,20 +26,27 @@ _MAX_COMMAND_LEN = 65535 # Factorio RCON hard limit
 
 
 def _lua_value(v) -> str:
-    """Serialise a Python scalar to a Lua literal (for run_skill params)."""
+    """Serialise a Python value to a Lua literal (for skill/query/primitive
+    params). Dicts/lists recurse, so nested structures like position={x,y}
+    serialise correctly."""
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return repr(v)
+    if isinstance(v, dict):
+        return _lua_table(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ",".join(_lua_value(item) for item in v) + "}"
     # String: single-quote and escape backslashes/quotes so it survives /sc.
     s = str(v).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{s}'"
 
 
 def _lua_table(params: dict) -> str:
-    """Serialise a flat dict to a Lua table literal, e.g. {item='coal',count=50}.
-    Keys are skill param names (item/count/ore/resource/output/radius/tech) —
-    valid bare Lua identifiers, so they need no quoting."""
+    """Serialise a dict to a Lua table literal, e.g. {item='coal',count=50} or
+    {action='place',position={x=10,y=-4}}. Keys are param names (item/count/
+    position/recipe/...) — valid bare Lua identifiers, so they need no quoting.
+    Values may be nested dicts/lists (see _lua_value)."""
     return "{" + ",".join(f"{k}={_lua_value(v)}" for k, v in params.items()) + "}"
 
 
@@ -261,6 +268,65 @@ class RCONGateway:
             # Old mod without the remote interface, or a Lua error — surface it.
             return {"ok": False, "detail": f"no skill result (is the mod loaded?): {result[:200]}"}
         return {"ok": bool(data.get("ok")), "detail": str(data.get("detail", ""))}
+
+    def run_primitive(self, action: dict) -> dict:
+        """
+        Run ONE primitive (Tier-0) action against the AI character via the
+        mod's "ai_player" remote interface — the same AIActions.run dispatch
+        the bridge LLM uses. `action` is the full action table, e.g.
+        {'action': 'place', 'item': 'stone-furnace', 'position': {'x': 3, 'y': -2}}.
+
+        Returns {'ok': bool, 'detail': str} (the handler's own actionable
+        status, or an error explaining why the call could not be made).
+        """
+        lua = (
+            "rcon.print(helpers.table_to_json(remote.call("
+            f"'ai_player','run_primitive',{_lua_table(action)})))"
+        )
+        result = self.query_lua(lua)
+        if result is None:
+            return {"ok": False, "detail": "ERROR: RCON send failed (is Factorio running?)"}
+        result = result.strip()
+        try:
+            data = json.loads(result)
+        except (ValueError, TypeError):
+            return {"ok": False, "detail": f"no result (is the mod loaded?): {result[:200]}"}
+        return {"ok": bool(data.get("ok")), "detail": str(data.get("detail", ""))}
+
+    def run_query(self, name: str, params: Optional[dict] = None) -> dict:
+        """
+        Run a read-only world/prototype query (queries.lua REGISTRY) via the
+        mod's "ai_player" remote interface. Returns the query's own parsed
+        table, or {'error': ...} on failure.
+        """
+        params = params or {}
+        lua = (
+            "rcon.print(helpers.table_to_json(remote.call("
+            f"'ai_player','query',{_lua_value(name)},{_lua_table(params)})))"
+        )
+        result = self.query_lua(lua)
+        if result is None:
+            return {"error": "RCON send failed (is Factorio running?)"}
+        result = result.strip()
+        try:
+            return json.loads(result)
+        except (ValueError, TypeError):
+            return {"error": f"no query result (is the mod loaded?): {result[:200]}"}
+
+    def list_queries(self) -> list[str]:
+        """Return the mod's valid query names via the remote interface."""
+        lua = (
+            "rcon.print(helpers.table_to_json("
+            "remote.call('ai_player','list_queries')))"
+        )
+        result = self.query_lua(lua)
+        if not result:
+            return []
+        try:
+            data = json.loads(result.strip())
+            return list(data) if isinstance(data, list) else []
+        except (ValueError, TypeError):
+            return []
 
     def list_skills(self) -> list[str]:
         """Return the AI's valid skill names via the remote interface."""
