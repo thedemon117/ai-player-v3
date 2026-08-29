@@ -1,0 +1,33 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.4.2
+Date: 2026-08-29
+  Features:
+    - Remote interface: get_chat lets an external harness poll the mod's
+      chat ring buffer directly (no python bridge needed).
+    - Remote interface: import_blueprint stages a blueprint string as entity
+      ghosts at a position (build_blueprint, falling back to manual
+      entity-ghost creation on Factorio 2.0 where the 1.x API path returns
+      nothing).
+    - Remote interface: export_blueprint captures a rectangle of the world
+      to a blueprint string.
+---------------------------------------------------------------------------------------------------
+Version: 0.4.0
+Date: 2026-07-16
+  Features:
+    - Remote interface: query/list_queries expose a read-only query registry
+      (get_recipe, get_resource_patch, can_place, nearest_buildable,
+      inspect_entity, get_enemies, get_character_state) for external callers,
+      alongside the existing skill/primitive surface.
+    - Remote interface: run_primitive lets external callers (e.g. an MCP
+      client) invoke the same Tier-0 actions (place, mine, craft, set_recipe,
+      insert, take, chat) the autonomous bridge LLM uses.
+  Changes:
+    - perception.lua: extracted describe_entity() so inspect_entity returns
+      exactly what the autonomous router sees.
+    - primitives.lua: exported placement_problem/DIRECTION_MAP for can_place.
+---------------------------------------------------------------------------------------------------
+Version: 0.3.5
+Date: 2026-07-11
+  Bugfixes:
+    - Fixed teleport commands stacking multiple characters on top of each
+      other.
