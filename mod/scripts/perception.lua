@@ -334,6 +334,68 @@ local function gather_factory(surface, force, cpos)
 end
 
 -- -------------------------------------------------------------------------
+-- Per-entity description — the standard perception entry for ONE entity.
+-- Shared by the gather() nearby scan and external queries (AIQueries
+-- inspect_entity), so an MCP client inspecting an entity sees EXACTLY what
+-- the autonomous router sees.
+-- -------------------------------------------------------------------------
+function AIPerception.describe_entity(e, force)
+  local entry = {
+    name        = e.name,
+    type        = e.type,
+    position    = {x = math.floor(e.position.x), y = math.floor(e.position.y)},
+    unit_number = e.unit_number,
+    is_enemy    = is_enemy(e, force),
+    slots       = entity_slots(e.name),
+  }
+
+  -- Status for machines
+  if e.status then
+    entry.status = status_string(e)
+  end
+
+  -- Recipe for crafting machines
+  if e.type == "assembling-machine" or e.type == "furnace" then
+    local recipe = e.get_recipe()
+    entry.recipe = recipe and recipe.name or nil
+    entry.fuel   = get_fuel_contents(e)
+    entry.input  = get_input_contents(e)
+    entry.output = get_output_contents(e)
+  end
+
+  -- Fuel for burner miners
+  if e.type == "mining-drill" and e.burner then
+    entry.fuel = get_fuel_contents(e)
+    entry.drop_position = e.drop_position
+  end
+
+  -- Contents for containers
+  if e.type == "container" or e.type == "logistic-container" then
+    local chest_inv = e.get_inventory(defines.inventory.chest)
+    entry.contents = summarize_inventory(chest_inv, 5)
+  end
+
+  -- Lab science pack contents
+  if e.type == "lab" then
+    local lab_inv = e.get_inventory(defines.inventory.lab_input)
+    entry.contents = summarize_inventory(lab_inv, 5)
+  end
+
+  -- Turret ammo
+  if e.type == "ammo-turret" then
+    local ammo_inv = e.get_inventory(defines.inventory.turret_ammo)
+    entry.contents = summarize_inventory(ammo_inv, 3)
+  end
+
+  -- Fluid connection points (pipe routing for the power chain & fluid recipes)
+  if FLUID_CONN_TYPES[e.type] then
+    entry.fluid_connections = get_fluid_connections(e)
+  end
+
+  return entry
+end
+
+-- -------------------------------------------------------------------------
 -- Main perception gather
 -- -------------------------------------------------------------------------
 
@@ -397,59 +459,7 @@ function AIPerception.gather(character)
   local nearby = {}
   for _, e in ipairs(raw_entities) do
     if e.valid and e ~= character then
-      local entry = {
-        name      = e.name,
-        type      = e.type,
-        position  = {x = math.floor(e.position.x), y = math.floor(e.position.y)},
-        unit_number = e.unit_number,
-        is_enemy  = is_enemy(e, force),
-        slots     = entity_slots(e.name),
-      }
-
-      -- Status for machines
-      if e.status then
-        entry.status = status_string(e)
-      end
-
-      -- Recipe for crafting machines
-      if e.type == "assembling-machine" or e.type == "furnace" then
-        local recipe = e.get_recipe()
-        entry.recipe = recipe and recipe.name or nil
-        entry.fuel   = get_fuel_contents(e)
-        entry.input  = get_input_contents(e)
-        entry.output = get_output_contents(e)
-      end
-
-      -- Fuel for burner miners
-      if e.type == "mining-drill" and e.burner then
-        entry.fuel = get_fuel_contents(e)
-        entry.drop_position = e.drop_position
-      end
-
-      -- Contents for containers
-      if e.type == "container" or e.type == "logistic-container" then
-        local chest_inv = e.get_inventory(defines.inventory.chest)
-        entry.contents = summarize_inventory(chest_inv, 5)
-      end
-
-      -- Lab science pack contents
-      if e.type == "lab" then
-        local lab_inv = e.get_inventory(defines.inventory.lab_input)
-        entry.contents = summarize_inventory(lab_inv, 5)
-      end
-
-      -- Turret ammo
-      if e.type == "ammo-turret" then
-        local ammo_inv = e.get_inventory(defines.inventory.turret_ammo)
-        entry.contents = summarize_inventory(ammo_inv, 3)
-      end
-
-      -- Fluid connection points (pipe routing for the power chain & fluid recipes)
-      if FLUID_CONN_TYPES[e.type] then
-        entry.fluid_connections = get_fluid_connections(e)
-      end
-
-      table.insert(nearby, entry)
+      table.insert(nearby, AIPerception.describe_entity(e, force))
       if #nearby >= 25 then break end
     end
   end

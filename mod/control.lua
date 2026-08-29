@@ -7,6 +7,7 @@ require("scripts.character")
 require("scripts.registry")
 require("scripts.perception")
 require("scripts.primitives")
+require("scripts.queries")
 require("scripts.brain")
 require("scripts.skills")
 
@@ -56,6 +57,159 @@ remote.add_interface("ai_player", {
   -- Returns { coop = bool, force = name } so the caller can confirm.
   set_coop = function(enabled)
     return AICharacter.set_coop(enabled == true)
+  end,
+  -- Read-only world/prototype query (queries.lua). name: query name;
+  -- params: table of query params. Works without a spawned character for
+  -- queries that take an explicit x/y. Returns the query's own table
+  -- ({error = ...} on failure).
+  query = function(name, params)
+    return AIQueries.run(name, params)
+  end,
+  -- Discovery: sorted list of valid query names.
+  list_queries = function()
+    return AIQueries.list()
+  end,
+  -- Run ONE primitive action (primitives.lua HANDLERS) against the AI
+  -- character — the same Tier-0 dispatch the bridge LLM uses, so an MCP
+  -- client can do surgical one-off operations (place/mine/craft/insert/take)
+  -- that no skill covers. action: table with an 'action' field plus the
+  -- handler's params (item/position/recipe/...).
+  run_primitive = function(action)
+    local character = AICharacter.get_character()
+    if not character then
+      return { ok = false, detail = "no ai character — /spawn-ai-player first" }
+    end
+    if type(action) ~= "table" or not action.action then
+      return { ok = false, detail = "action table with an 'action' field required" }
+    end
+    local ok, detail = AIActions.run(character, action)
+    return { ok = ok, detail = detail or "" }
+  end,
+  -- Read chat messages logged since a given tick (inclusive). Returns
+  -- { messages = { {player,message,tick}, ... }, latest_tick = <tick> }.
+  -- Pass since = 0 (or omit) to get the whole ring buffer. An external
+  -- harness polls this to receive player chat without the python_bridge.
+  get_chat = function(params)
+    local s = storage.ai_player
+    if not s then return { messages = {}, latest_tick = game.tick } end
+    local log = s.chat_log or {}
+    local since = (params and tonumber(params.since)) or 0
+    local out, latest = {}, 0
+    for _, e in ipairs(log) do
+      if (e.tick or 0) >= since then
+        out[#out + 1] = { player = e.player or "", message = e.message or "", tick = e.tick or 0 }
+        if (e.tick or 0) > latest then latest = e.tick or 0 end
+      end
+    end
+    return { messages = out, latest_tick = latest }
+  end,
+
+  -- Import a Factorio blueprint string as entity ghosts at {x,y} on nauvis.
+  -- Uses an item-on-ground blueprint stack (no player cursor needed). Ghosts
+  -- are placed via build_blueprint(force_build=true) so placement restrictions
+  -- are ignored; they are NOT revived — the build_ghosts skill constructs them
+  -- from inventory afterwards. force defaults to the AI's force.
+  -- Returns { ok, errors, ghost_count } or { ok=false, detail=... }.
+  import_blueprint = function(params)
+    local s = game.surfaces["nauvis"]
+    if not s then return { ok = false, detail = "no nauvis surface" } end
+    local p = params or {}
+    local bp = p.blueprint
+    local x = tonumber(p.x) or 0
+    local y = tonumber(p.y) or 0
+    if type(bp) ~= "string" or bp == "" then
+      return { ok = false, detail = "blueprint string required" }
+    end
+    local fname = p.force or (storage.ai_player and storage.ai_player.force_name) or "player"
+    local f = game.forces[fname]
+    if not f then return { ok = false, detail = "force '" .. fname .. "' not found" } end
+    local e = s.create_entity{ name = "item-on-ground", position = { x = x, y = y }, stack = "blueprint" }
+    if not e or not e.valid then
+      return { ok = false, detail = "could not create blueprint item-on-ground" }
+    end
+    local err = e.stack.import_stack(bp)
+    local is_bp = e.stack.is_blueprint
+    if not is_bp then
+      e.destroy()
+      return { ok = false, detail = "string is a blueprint book, not a single blueprint (import_err=" .. tostring(err) .. ")" }
+    end
+    -- Attempt 1: build_blueprint (Factorio 1.x API — may be broken/changed in 2.0)
+    local gs = e.stack.build_blueprint{
+      surface = s, force = f,
+      position = { x = x, y = y },
+      force_build = true,
+    }
+    -- Count ghosts via pairs (in case # doesn't work on the return type in 2.0)
+    local ghost_count = 0
+    for _ in pairs(gs or {}) do ghost_count = ghost_count + 1 end
+    -- Attempt 2: if build_blueprint returned nothing, fall back to manual
+    -- entity-ghost creation from the parsed blueprint entity table.
+    -- In Factorio 2.0 LuaItemStack.build_blueprint may have changed; this
+    -- fallback uses create_entity{name="entity-ghost"} directly.
+    local fallback_used = false
+    if ghost_count == 0 then
+      local ents = e.stack.get_blueprint_entities and e.stack:get_blueprint_entities() or nil
+      if ents then
+        for _, be in ipairs(ents) do
+          -- Blueprint entity positions are relative to the blueprint origin;
+          -- add (x,y) offset. create_entity needs the center position.
+          local gx = x + (be.position and be.position.x or 0)
+          local gy = y + (be.position and be.position.y or 0)
+          local ghost = s.create_entity{
+            name = "entity-ghost",
+            position = { x = gx, y = gy },
+            force = f,
+            inner_name = be.name,
+            direction = be.direction,
+            raises_built = false,
+          }
+          if ghost and ghost.valid then ghost_count = ghost_count + 1 end
+        end
+        fallback_used = true
+      end
+    end
+    e.destroy()
+    return { ok = true, errors = err or 0, ghost_count = ghost_count,
+             import_err = tostring(err), is_blueprint = tostring(is_bp),
+             fallback = fallback_used }
+  end,
+
+  -- Export all entities in a rectangle (x1,y1)-(x2,y2) on nauvis to a blueprint
+  -- string. force defaults to the AI's force. Returns { ok, blueprint } or
+  -- { ok=false, detail=... }. Empty area -> ok=false.
+  export_blueprint = function(params)
+    local s = game.surfaces["nauvis"]
+    if not s then return { ok = false, detail = "no nauvis surface" } end
+    local p = params or {}
+    local x1, y1 = tonumber(p.x1) or 0, tonumber(p.y1) or 0
+    local x2, y2 = tonumber(p.x2) or 0, tonumber(p.y2) or 0
+    local fname = p.force or (storage.ai_player and storage.ai_player.force_name) or "player"
+    local f = game.forces[fname]
+    if not f then return { ok = false, detail = "force '" .. fname .. "' not found" } end
+    local lt = { x = math.min(x1, x2), y = math.min(y1, y2) }
+    local rb = { x = math.max(x1, x2), y = math.max(y1, y2) }
+    -- Count first so we can report "no entities" without making an empty bp.
+    local ents = s.find_entities_filtered{ area = { left_top = lt, right_bottom = rb }, force = f }
+    if #ents == 0 then
+      return { ok = false, detail = "no entities in area for force '" .. fname .. "'" }
+    end
+    local e = s.create_entity{ name = "item-on-ground", position = { x = lt.x, y = lt.y }, stack = "blueprint" }
+    if not e or not e.valid then
+      return { ok = false, detail = "could not create blueprint item-on-ground" }
+    end
+    e.stack.label = "Exported Area"
+    e.stack.create_blueprint{
+      surface = s, force = f,
+      area = { left_top = lt, right_bottom = rb },
+      include_entities = true, include_modules = true,
+      include_station_names = true, include_trains = true, include_fuel = true,
+    }
+    local str = e.stack.export_stack()
+    e.destroy()
+    if not str or str == "" then
+      return { ok = false, detail = "export_stack returned empty" }
+    end
+    return { ok = true, blueprint = str }
   end,
 })
 
@@ -328,11 +482,31 @@ end)
 -- Player chat → directive
 -- -------------------------------------------------------------------------
 
+-- Append a chat line to the ring buffer (newest last). Capped so storage
+-- doesn't grow unbounded over a long session. Kept on storage.ai_player.chat_log
+-- so it survives save/load and is readable via remote.call('ai_player','get_chat').
+local function log_chat(player_name, message, tick)
+  local log = storage.ai_player.chat_log
+  log[#log + 1] = {
+    player = player_name or "",
+    message = message or "",
+    tick = tick or game.tick,
+  }
+  while #log > 100 do table.remove(log, 1) end
+end
+
 script.on_event(defines.events.on_console_chat, function(event)
   if not storage.ai_player then return end
   if not event.message then return end
 
   local msg = event.message
+  -- Log EVERY console chat line (not just AI directives) so an external
+  -- harness (pi-factorio RCON bridge) can poll the full conversation via
+  -- remote.call('ai_player','get_chat', {since = <tick>}).
+  local pname = (event.player_index and game.players[event.player_index])
+    and game.players[event.player_index].name or ""
+  log_chat(pname, msg, event.tick)
+
   local lower = msg:lower()
   local directive = nil
 

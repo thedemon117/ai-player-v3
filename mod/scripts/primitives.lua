@@ -277,6 +277,11 @@ local function placement_problem(surface, item_name, position)
   return nil
 end
 
+-- Exported for AIQueries.can_place, so the read-only placement check runs the
+-- SAME special-case rules as the place primitive (single source of truth).
+AIActions.placement_problem = placement_problem
+AIActions.DIRECTION_MAP = DIRECTION_MAP
+
 local function action_place(character, action)
   if not action.position then
     return false, "place: missing position"
