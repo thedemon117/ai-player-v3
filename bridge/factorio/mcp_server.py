@@ -274,6 +274,17 @@ def deposit_to_chest(radius: int = 32, keep: int = 50) -> str:
 
 
 @mcp.tool()
+def build_plan(steps: list[dict], stop_on_error: bool = False) -> str:
+    """Place many entities in one call. Each step: {item, position:{x,y},
+    direction? ("north"/"east"/...), recipe?, insert? {"coal": 5}}, up to 100.
+    Uses the same place/set_recipe/insert rules as the single actions, builds
+    what is within build reach, then walks toward the first step that is not
+    and returns; call again with the same steps to continue (steps already
+    built are skipped, so repeating is safe). Items must be in the inventory."""
+    return _skill("build_plan", steps=steps, stop_on_error=stop_on_error or None)
+
+
+@mcp.tool()
 def return_home() -> str:
     """Walk the AI character back to its home anchor (set on first spawn)."""
     return _skill("return_home")
@@ -408,6 +419,370 @@ def get_enemies(radius: int = 50, x: float | None = None, y: float | None = None
     nearest-first with health and distance, plus a composition summary
     (units/spawners/worms) and a threat_level (safe/caution/danger)."""
     return _query("get_enemies", radius=radius, x=x, y=y)
+
+
+@mcp.tool()
+def analyze_factory(radius: int = 40, x: float | None = None, y: float | None = None) -> str:
+    """One-call diagnosis of what is stuck around a point (defaults to the AI
+    character's position): machines grouped by (name, problem) with the nearest
+    sample position and, for starved crafters, the missing ingredient. Idle but
+    healthy states (inserters waiting for items) are counted separately, so
+    totals always add up. radius is capped at 150."""
+    return _query("analyze_factory", radius=radius, x=x, y=y)
+
+
+@mcp.tool()
+def map_warnings(charted_only: bool = False) -> str:
+    """The map screen's warning icons as one punch list: every machine of the
+    force with a problem status across the whole surface, grouped by problem
+    (most frequent first), nearest-first with positions. Idle-but-healthy
+    inserters are listed last, separately. charted_only=true limits it to
+    chunks the force has charted."""
+    return _query("map_warnings", charted_only=charted_only)
+
+
+@mcp.tool()
+def production_stats(window: str = "1m", names: list[str] | None = None,
+                     kind: str = "both", top: int = 20) -> str:
+    """Item/fluid production and consumption of the force on the AI's surface,
+    like the in-game production statistics window. Rates are per minute over
+    window (5s, 1m, 10m, 1h, 10h, 50h, 250h, 1000h); also all-time totals.
+    names restricts to specific items/fluids; kind is item, fluid or both;
+    rows are sorted by the larger of produced/consumed rate, capped at top."""
+    return _query("production_stats", window=window, names=names, kind=kind, top=top)
+
+
+@mcp.tool()
+def map_view(x: float | None = None, y: float | None = None, radius: int = 20,
+             to_x: float | None = None, to_y: float | None = None) -> str:
+    """Character-grid map of the area around (x, y) (default: the AI character),
+    one glyph per tile, radius 4-40: water ~, trees T, rocks R, cliffs C, ore
+    f/c/k/s/u/O, belts as arrows, buildings by letter, ghosts g, the character @,
+    unexplored ? (fog). Give to_x/to_y to trace the DIRECT line (*) and learn
+    what lies on it (water, a tree, a building); goto routes around such things
+    by pathfinding, so this shows how much of a detour to expect, and whether the
+    target is even on the same side of a lake. The legend is in the result."""
+    r = json.loads(_query("map_view", x=x, y=y, radius=radius, to_x=to_x, to_y=to_y))
+    if "text" not in r:
+        return json.dumps(r, indent=2)
+    meta = {k: r[k] for k in ("character", "path", "note") if r.get(k) is not None}
+    return r["text"] + "\n\nlegend: " + json.dumps(r["legend"], sort_keys=True) + "\n" + json.dumps(meta)
+
+
+@mcp.tool()
+def belt_line(at: float, start: float, end: float, horizontal: bool = True) -> str:
+    """Walk a belt row tile by tile and report gaps/obstructions, each belt's
+    direction and per-lane contents. horizontal=True scans tile row y=at from tile x=start to
+    x=end; False scans tile column x=at from y=start to y=end (tile
+    coordinates = floor of the position; span capped at 300). A gap
+    or an unexpected direction cuts a line in half (often a pole dropped on the
+    row); one packed lane next to an empty one means a bad side-load."""
+    return _query("belt_line", at=at, **{"from": start}, to=end, horizontal=horizontal)
+
+
+@mcp.tool()
+def inserter_at(x: float, y: float) -> str:
+    """Resolved pickup and drop positions of the inserter at (x, y) and what
+    stands on each. An inserter's direction names the side it PICKS UP from;
+    it drops on the opposite side, so this is the reliable wiring check."""
+    return _query("inserter_at", x=x, y=y)
+
+
+@mcp.tool()
+def power_report() -> str:
+    """Generation vs capacity (MW) and every electric-pole network on the
+    surface with pole count and bounding box. More than one network means
+    something is islanded, the usual cause of a built block sitting at no_power."""
+    return _query("power_report")
+
+
+@mcp.tool()
+def silo_status() -> str:
+    """Rocket silos of the force on the AI's surface: rocket parts built, phase,
+    whether the rocket is ready to launch, status and cargo, plus the launches
+    recorded so far (tick, silo, cargo)."""
+    return _query("silo_status")
+
+
+@mcp.tool()
+def platforms() -> str:
+    """Space Age: every space platform of the force: state, paused, speed,
+    location (at a planet or between two), schedule stops and hub items."""
+    return _query("platforms")
+
+
+@mcp.tool()
+def launch_rocket(x: float | None = None, y: float | None = None) -> str:
+    """Walk to the nearest rocket silo (or the one nearest {x,y}) and launch its
+    rocket. Fails with the parts count until the silo has built the rocket; a
+    rocket still rising says so (call again). Cargo is whatever was inserted
+    into the silo."""
+    return _skill("launch_rocket", position={"x": x, "y": y} if x is not None and y is not None else None)
+
+
+@mcp.tool()
+def layout_context(area: list[float] | None = None, points: list[dict] | None = None) -> str:
+    """What a build check needs about ground a plan will join: belts in
+    area = [x1, y1, x2, y2] (direction, underground type), mining drills with the
+    one tile each outputs onto and what stands there, and the entity standing at
+    each of points = [{x, y}]. Respects fog of war."""
+    return _query("layout_context", area=area, points=points)
+
+
+@mcp.tool()
+def order_platform(name: str) -> str:
+    """Space Age: order a new space platform above the planet the AI stands on.
+    Needs rocket-silo research; the platform waits for a starter pack that a
+    silo launches."""
+    return _skill("order_platform", name=name)
+
+
+@mcp.tool()
+def equip(gun: str | None = None, ammo: str | None = None, armor: str | None = None) -> str:
+    """Put items from the AI's inventory into its gun / ammo / armor slots (a new
+    gun takes an empty slot, ammo tops up the paired slot to one stack, armor
+    swaps; the old item returns to the inventory). Nothing is created."""
+    return _skill("equip", gun=gun, ammo=ammo, armor=armor)
+
+
+@mcp.tool()
+def supply_turrets(ammo: str, per_turret: int = 10, radius: int = 40) -> str:
+    """Load ammo from the AI's inventory into its gun turrets within radius that
+    hold fewer than per_turret rounds; walks to the nearest turret out of reach
+    (call again to continue)."""
+    return _skill("supply_turrets", ammo=ammo, per_turret=per_turret, radius=radius)
+
+
+@mcp.tool()
+def queue_jobs(steps: list[dict], on_fail: str = "stop") -> str:
+    """Queue skills to run one after another in the background. steps = [{"skill":
+    "gather","item":"coal","count":20}, {"skill":"goto","position":{"x":0,"y":0}},
+    {"wait": 5}]. While a walk or drive is running it waits; a skill that answers
+    "out of reach — call me again" is re-run after the walk (up to 25 attempts).
+    on_fail "stop" (default) drops the rest after a failed step, "continue" skips
+    it. At most 50 steps; see job_status."""
+    return _skill("queue_jobs", steps=steps, on_fail=on_fail)
+
+
+@mcp.tool()
+def cancel_jobs() -> str:
+    """Clear the background job queue (the current step and everything waiting) and
+    stop a walk in progress."""
+    return _skill("cancel_jobs")
+
+
+@mcp.tool()
+def job_status() -> str:
+    """The background job queue: current step (and how many attempts it has used),
+    waiting steps, the last 20 results and the on_fail mode."""
+    return _query("job_status")
+
+
+@mcp.tool()
+def platform_build(platform: str, steps: list[dict]) -> str:
+    """Space Age: place ghosts on a platform (the hub builds them from its own
+    inventory). steps = [{name, x, y, direction?, recipe?}]; name is an item or
+    entity, space-platform-foundation places a floor tile ghost. Floor must grow
+    outward from existing floor, in order. Up to 400 steps; rejects are listed."""
+    return _skill("platform_build", platform=platform, steps=steps)
+
+
+@mcp.tool()
+def platform_deconstruct(platform: str, x1: float, y1: float, x2: float, y2: float,
+                         names: list[str] | None = None) -> str:
+    """Space Age: mark buildings of the force in an area of a platform for
+    deconstruction (the hub takes them back); ghosts in the area are removed. The
+    hub itself is never touched. names optionally filters."""
+    return _skill("platform_deconstruct", platform=platform, x1=x1, y1=y1, x2=x2, y2=y2, names=names)
+
+
+@mcp.tool()
+def platform_configure(platform: str, x: float, y: float, recipe: str | None = None,
+                       filters: list[str] | None = None, direction: int | None = None) -> str:
+    """Space Age: set the recipe, filters (inserters; asteroid chunk names for
+    asteroid collectors) and/or direction of the building or ghost at (x, y) on a
+    platform, like clicking it in remote view."""
+    return _skill("platform_configure", platform=platform, x=x, y=y, recipe=recipe, filters=filters, direction=direction)
+
+
+@mcp.tool()
+def platform_requests(platform: str, items: dict, import_from: str | None = None) -> str:
+    """Space Age: set what the platform hub requests (rockets bring it up),
+    replacing the first manual request section. items = {name: count}; {} clears.
+    import_from is the planet to import from (default the one it is parked at)."""
+    return _skill("platform_requests", platform=platform, items=items, import_from=import_from)
+
+
+@mcp.tool()
+def landing_pad_requests(x: float, y: float, items: dict) -> str:
+    """Space Age: set what a cargo landing pad at (x, y) asks for; platforms
+    parked above the planet holding those items drop them down in cargo pods.
+    items = {name: count}; {} clears."""
+    return _skill("landing_pad_requests", x=x, y=y, items=items)
+
+
+@mcp.tool()
+def chest_requests(x: float, y: float, items: dict) -> str:
+    """Set what the requester or buffer chest at (x, y) asks the logistic network
+    for. items = {name: count}; {} clears."""
+    return _skill("chest_requests", x=x, y=y, items=items)
+
+
+@mcp.tool()
+def platform_schedule(platform: str, stops: list[dict] | None = None, paused: bool | None = None) -> str:
+    """Space Age: set a platform's schedule, stops = [{planet, wait}] with wait a
+    number of seconds or "requests" (all hub requests satisfied), and/or pause or
+    resume its thrust with paused."""
+    return _skill("platform_schedule", platform=platform, stops=stops, paused=paused)
+
+
+@mcp.tool()
+def drop_to_planet(x: float | None = None, y: float | None = None) -> str:
+    """Space Age: from a platform parked at a planet, ride a cargo pod down to that
+    planet's surface (near x, y when given)."""
+    position = {"x": x, "y": y} if x is not None and y is not None else None
+    return _skill("drop_to_planet", position=position)
+
+
+@mcp.tool()
+def map_overview(center_x: float | None = None, center_y: float | None = None, radius: int = 320) -> str:
+    """What the map screen would show, at chunk resolution, over known ground
+    (radius 32-640 around the AI or a center): resource patches per ore, rocks,
+    forests, water and enemy bases, each grouped into connected chunk areas
+    with a centre, a bounding box, a size, an `at` tile on the patch to goto/scan
+    and the distance from the AI. Nearest first, at most 60 groups."""
+    center = {"x": center_x, "y": center_y} if center_x is not None and center_y is not None else None
+    return _query("map_overview", center=center, radius=radius)
+
+
+@mcp.tool()
+def alerts() -> str:
+    """The in-game alert panel (turret out of ammo, entity destroyed, no power,
+    ...) grouped by type, oldest first. Needs a connected human player on the
+    force; headless it says so — battle_report is the headless equivalent."""
+    return _query("alerts")
+
+
+@mcp.tool()
+def find_buildable_area(width: int, height: int, near_x: float, near_y: float, max_distance: int = 50) -> str:
+    """Nearest clear width x height rectangle of explored ground to (near_x,
+    near_y): no water and nothing standing in it (trees are allowed and counted
+    in trees_in_area, ore tiles count as occupied). Searches outward in rings up
+    to max_distance (max 100). Use it to site a build before build_plan."""
+    return _query("find_buildable_area", width=width, height=height, near={"x": near_x, "y": near_y},
+                  max_distance=max_distance)
+
+
+@mcp.tool()
+def describe_prototype(names: list[str]) -> str:
+    """Facts about up to 10 names at once: for each, the item (stack size, fuel
+    value), the entity it places (tile size, energy source, power kW, crafting
+    speed, mining area, inserter pickup/drop offsets, drill output offset, fluid
+    connections as pipe offsets), the recipe that makes it and the fluid.
+    Geometry offsets are for the entity facing north."""
+    return _query("describe_prototype", names=names)
+
+
+@mcp.tool()
+def route_belt(start: dict, end: dict, belt: str | None = None, underground: str | None = None,
+               allow_underground: bool | None = None, clear_obstacles: bool = False,
+               margin: int = 12, through_inserters: bool = False) -> str:
+    """Plan a belt between two endpoints on the real map with weighted A* (turns
+    and undergrounds cost extra, existing belts/machines/water are avoided) and
+    return build steps for build_plan. Endpoints are {x, y} plus optional
+    port: tile (default), drop (a drill/inserter output), pickup (an inserter's
+    pickup tile), belt (join an existing belt: from continues it, to feeds or
+    side-loads it) and optional direction. clear_obstacles lets the route go
+    through trees/rocks (listed in mine_first). The result has steps, bill vs
+    inventory, notes on how it joins other belts, and the detour taken to avoid
+    inserter tiles. Read-only: nothing is built."""
+    return _query("route_belt", **{"from": start}, to=end, belt=belt, underground=underground,
+                  allow_underground=allow_underground, clear_obstacles=clear_obstacles,
+                  margin=margin, through_inserters=through_inserters)
+
+
+@mcp.tool()
+def route_pipe(start: dict, end: dict, pipe: str | None = None, underground: str | None = None,
+               allow_underground: bool | None = None, clear_obstacles: bool = False, margin: int = 12) -> str:
+    """Like route_belt for pipes (pipe-to-ground for crossings). Endpoints may use
+    port "fluid": the first unconnected fluid connection of the entity at x,y.
+    Returns build steps for build_plan; nothing is built."""
+    return _query("route_pipe", **{"from": start}, to=end, pipe=pipe, underground=underground,
+                  allow_underground=allow_underground, clear_obstacles=clear_obstacles, margin=margin)
+
+
+@mcp.tool()
+def list_registered_blueprints() -> str:
+    """Blueprint provenance registry: layouts made during this run (exported
+    from the map or compiled from the agent's own layout), oldest first, and
+    whether import_blueprint enforces it (mod setting
+    ai-player-enforce-blueprint-provenance)."""
+    return _query("list_registered_blueprints")
+
+
+@mcp.tool()
+def trace_belt(x: float, y: float) -> str:
+    """Follow the belt line through the tile at (x, y) both ways: legs (runs of
+    one direction, with lane fill %), how it starts and ends (dead end, what it
+    faces, unpaired underground), what feeds it and takes from it, lane capacity.
+    Use it when items stop flowing; complements belt_line."""
+    return _query("trace_belt", x=x, y=y)
+
+
+@mcp.tool()
+def list_trains() -> str:
+    """Trains on the AI's surface (state, locomotives/wagons, position, station,
+    schedule, cargo) and the names of the force's train stops — the only valid
+    targets for set_train_schedule."""
+    return _query("list_trains")
+
+
+@mcp.tool()
+def set_train_schedule(train_id: int, stops: list[dict]) -> str:
+    """Give a train a schedule: stops = [{"station": "Name", "wait": "full" |
+    "empty" | seconds}] (default wait 5 s). Station names must be existing train
+    stops. Sets the train to automatic and warns if no locomotive has fuel."""
+    return _skill("set_train_schedule", train_id=train_id, stops=stops)
+
+
+@mcp.tool()
+def list_technologies(status: str = "available", search: str | None = None, limit: int = 60) -> str:
+    """The tech tree with the exact names `research` takes. status: researched,
+    in-progress, queued, available, trigger (completes by doing something, the
+    action is listed), locked or all. Each row has prerequisites (and which are
+    missing), the total science bill and seconds per unit. Also the live queue
+    and per-status counts. search filters by name substring."""
+    return _query("list_technologies", status=status, search=search, limit=limit)
+
+
+@mcp.tool()
+def cancel_research(tech: str) -> str:
+    """Remove a queued technology that has not started. The research in progress
+    cannot be cancelled (its progress would be lost)."""
+    return _skill("cancel_research", tech=tech)
+
+
+@mcp.tool()
+def drive_to(x: float, y: float, arrive_within: float = 3) -> str:
+    """Walk to the nearest free car of the AI's force (within 30 tiles), fuel it
+    from the AI's inventory, and drive it to (x, y). Asynchronous: the result
+    (parked/failed) shows up in the next action results. Cars do not path around
+    lakes or forests; on "stuck" use goto, which pathfinds."""
+    return _skill("drive_to", position={"x": x, "y": y}, arrive_within=arrive_within)
+
+
+@mcp.tool()
+def exit_vehicle() -> str:
+    """Get the AI out of the vehicle it is driving."""
+    return _skill("exit_vehicle")
+
+
+@mcp.tool()
+def battle_report() -> str:
+    """Defence picture in one call: own entities below max health, turrets with
+    no ammo, and enemy clusters (size, top names, centre) with the distance to
+    the nearest own entity, nearest first."""
+    return _query("battle_report")
 
 
 @mcp.tool()

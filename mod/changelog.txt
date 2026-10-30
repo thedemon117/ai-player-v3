@@ -1,4 +1,246 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.21.0
+Date: 2026-10-30
+  Features:
+    - launch_rocket takes an optional platform: the rocket's cargo goes to that
+      platform hub (platform must be parked above this planet).
+    - Query layout_context: belts in an area, mining drills with their output
+      tile and what stands there, and what stands at given points.
+---------------------------------------------------------------------------------------------------
+Version: 0.20.0
+Date: 2026-10-30
+  Features:
+    - Background job queue (scripts/jobs.lua): skill queue_jobs runs a list of
+      skill entries one after another from on_tick, waiting out walks and
+      drives and re-running skills that ask to be called again; cancel_jobs;
+      query job_status.
+---------------------------------------------------------------------------------------------------
+Version: 0.19.0
+Date: 2026-10-30
+  Features:
+    - Space Age platform tooling (scripts/space.lua): skills platform_build
+      (ghosts the hub builds), platform_deconstruct, platform_configure,
+      platform_requests, landing_pad_requests, chest_requests,
+      platform_schedule and drop_to_planet (cargo pod to the planet).
+---------------------------------------------------------------------------------------------------
+Version: 0.18.0
+Date: 2026-10-30
+  Features:
+    - Query map_overview: chunk-resolution map screen (resource patches, rocks,
+      forests, water, enemy bases as connected groups with centre, box, size,
+      a tile on the patch and distance). AIVision.known_chunks added.
+    - Query alerts: the in-game alert panel as the force's players see it.
+---------------------------------------------------------------------------------------------------
+Version: 0.17.0
+Date: 2026-10-30
+  Features:
+    - Query find_buildable_area: nearest clear rectangle of explored ground
+      (searched in rings), trees counted.
+    - Query describe_prototype: item, entity (size, energy, speeds, inserter
+      and drill offsets, fluid connections), recipe and fluid facts by name.
+      New scripts/spatial.lua.
+---------------------------------------------------------------------------------------------------
+Version: 0.16.0
+Date: 2026-10-30
+  Features:
+    - Queries route_belt and route_pipe: weighted A* between two endpoints on
+      the real map (turns/undergrounds cost extra; buildings, water, cliffs and
+      other belts are avoided; ports tile/drop/pickup/belt/fluid), returning
+      build steps for build_plan, the bill vs inventory, trees/rocks to mine
+      first and notes on how the route joins existing belts. Nothing is built.
+      New scripts/route/{core,scan,api}.lua.
+---------------------------------------------------------------------------------------------------
+Version: 0.15.0
+Date: 2026-10-30
+  Features:
+    - Optional blueprint provenance (setting ai-player-enforce-blueprint-provenance,
+      default off): import_blueprint refuses layouts that were not made in this
+      run; export_blueprint registers what it hands out; remote
+      register_blueprint records compiled layouts; query
+      list_registered_blueprints. Layouts are keyed by content (a 128-bit hash
+      of a canonical form), not by string, so re-encoded copies match. New
+      scripts/bp_registry.lua.
+---------------------------------------------------------------------------------------------------
+Version: 0.14.0
+Date: 2026-10-30
+  Features:
+    - Query trace_belt: follow a belt line through a tile (legs, lane fill,
+      start/end, feeders/takers, unpaired undergrounds). New scripts/belts.lua.
+    - Query list_trains and skill set_train_schedule.
+---------------------------------------------------------------------------------------------------
+Version: 0.13.0
+Date: 2026-10-30
+  Features:
+    - Query list_technologies: the tech tree with exact internal names,
+      status, prerequisites (and which are missing), science bill, trigger
+      actions, the live queue and counts.
+    - Skill cancel_research: remove a queued, not-yet-started technology
+      (progress of the one running is never lost).
+  Changes:
+    - research{tech} that cannot be queued now says why (unknown, already
+      done, already queued, missing prerequisites, trigger tech) instead of
+      silently queueing a different technology.
+---------------------------------------------------------------------------------------------------
+Version: 0.12.0
+Date: 2026-10-30
+  Features:
+    - Skill drive_to: walk to the nearest free car, fuel it from the
+      inventory, drive it to a point (continuous steering, braking, reverse
+      attempts, honest failure when stuck or out of fuel). Asynchronous like
+      walking. Skill exit_vehicle. New module scripts/driving.lua.
+---------------------------------------------------------------------------------------------------
+Version: 0.11.0
+Date: 2026-10-30
+  Features:
+    - Walking uses the engine pathfinder (surface.request_path, answered via
+      on_script_path_request_finished): the character follows the waypoints,
+      so trees, water and buildings are walked around and the walk budget is
+      extended to the route length. If no path is returned it falls back to
+      the old straight line and ends "blocked" when something is in the way.
+  Bugfixes:
+    - The pathfinder request needs entity_to_ignore = the character, or its own
+      collision box blocks the start and every request returns no path.
+---------------------------------------------------------------------------------------------------
+Version: 0.10.0
+Date: 2026-10-30
+  Features:
+    - Skill equip: move a gun / ammo / armor from the inventory into the
+      character's slots (nothing is created).
+    - Skill supply_turrets: load ammo from the inventory into nearby gun
+      turrets that are low; walks to the nearest one out of reach.
+    - Query battle_report: damaged own entities, turrets without ammo, enemy
+      clusters with distance to the nearest own entity (respects fog of war).
+---------------------------------------------------------------------------------------------------
+Version: 0.9.0
+Date: 2026-10-30
+  Features:
+    - Skill launch_rocket: walk to the nearest rocket silo and launch its
+      rocket (like the launch button); a silo without a finished rocket fails
+      with the parts count. on_rocket_launched records each launch.
+    - Skill order_platform (Space Age): order a space platform above the
+      planet the character stands on.
+    - Queries silo_status (parts, phase, readiness, cargo, recorded launches)
+      and platforms (state, location, schedule, hub items). MCP tools.
+    - Query map_view: character-grid map around the character (terrain, ore,
+      trees/rocks/cliffs, buildings, ghosts, fog) with a legend; `to` traces
+      the straight walking line and names the first obstacle (walk_to has no
+      pathfinding). Query area_snapshot: JSON of a rectangle for tools/lpf
+      render-area. MCP tool map_view.
+  Bugfixes:
+    - launch_rocket walks to a point beside the silo, not its centre (inside
+      the collision box, never reachable).
+---------------------------------------------------------------------------------------------------
+Version: 0.8.1
+Date: 2026-10-30
+  Bugfixes:
+    - Factorio 2.1 changed mine-entity research triggers from `entity` to an
+      `entities` list (all ten of them, e.g. oil-processing, lithium-processing),
+      so trigger evaluation looked up a nil prototype name. AITriggers now
+      accepts both shapes; "Mine a X or Y" in the research hint.
+---------------------------------------------------------------------------------------------------
+Version: 0.8.0
+Date: 2026-10-30
+  Features:
+    - Optional fog of war (runtime setting ai-player-fog-of-war, default off;
+      scripts/vision.lua). The engine never charts for a character without a
+      player, so queries could "see" ore the AI never approached. With the
+      setting on, get_resource_patch, inspect_entity, analyze_factory and
+      map_warnings only report entities in KNOWN chunks (explored by the AI or
+      charted by the force), get_enemies only VISIBLE ones, and goto refuses a
+      target that is unexplored and more than 64 tiles away. Exploration is
+      recorded either way, and the area around spawn is known from the start.
+      map_warnings charted_only now means "known chunks" and also works with
+      the setting off. Remote interface: set_fog_of_war.
+---------------------------------------------------------------------------------------------------
+Version: 0.7.0
+Date: 2026-10-30
+  Features:
+    - Skill build_plan: place up to 100 entities (item, position, direction,
+      recipe, starter items) from one call, using the single-action place /
+      set_recipe / insert primitives. Builds what is within build reach, then
+      walks toward the first step that is not; calling it again continues
+      (already-built steps are skipped). Also exposed as an MCP tool.
+---------------------------------------------------------------------------------------------------
+Version: 0.6.1
+Date: 2026-10-30
+  Features:
+    - Queries belt_line (tile-by-tile belt row: gaps, obstructions, direction,
+      per-lane contents), inserter_at (resolved pickup/drop positions and what
+      stands on them) and power_report (generation vs capacity, electric-pole
+      networks, unpowered count). Also exposed as MCP tools.
+---------------------------------------------------------------------------------------------------
+Version: 0.6.0
+Date: 2026-10-30
+  Features:
+    - Trigger technologies for the player-less AI character (scripts/triggers.lua).
+      Factorio 2.0 gates the first techs behind actions (craft N, mine, build)
+      that the engine credits only from player activity; the AI character has no
+      LuaPlayer, so hand-crafting never counted and "craft a lab"
+      (automation-science-pack) could not complete, locking the whole tech tree.
+      AITriggers keeps a hand-craft ledger (called from every begin_crafting
+      site) and re-derives each trigger from real state: production statistics
+      plus the ledger for craft-item, mining products for mine-entity, an
+      existing entity for build-entity. Nothing is marked researched without the
+      work having been done; triggers that cannot be met on Nauvis are left
+      alone. The research skill now names the exact pending condition. Remote
+      interface: trigger_status.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.5
+Date: 2026-10-30
+  Bugfixes:
+    - Factorio 2.1 removed defines.inventory.furnace_source and
+      assembling_machine_input (both nil there, so get_inventory(nil) errored
+      for every furnace/assembler lookup: perception input contents, the
+      insert/take "input" slot, analyze_factory's missing ingredients). Fall
+      back to crafter_input when the old names are absent; 2.0 behaviour is
+      unchanged.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.4
+Date: 2026-10-30
+  Features:
+    - Query production_stats: per-minute item/fluid production and consumption
+      over a chosen window (5s .. 1000h) plus all-time totals, like the
+      production statistics window. Also exposed as an MCP tool.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.3
+Date: 2026-10-30
+  Features:
+    - Query map_warnings: whole-surface punch list of machines with a problem
+      status, grouped by problem and sorted nearest-first; idle inserters are
+      listed separately; optional charted_only. Also exposed as an MCP tool.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.2
+Date: 2026-10-30
+  Features:
+    - Query analyze_factory: machines within a radius grouped by (name,
+      problem) with a sample position and the missing ingredient of starved
+      crafters; idle-but-healthy states are tallied separately. Also exposed as
+      an MCP tool.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.1
+Date: 2026-10-30
+  Changes:
+    - BREAKING: gather, deconstruct and build_ghosts no longer teleport to their
+      targets. They act only on targets within character reach
+      (can_reach_entity, build_distance for ghosts); otherwise they start a walk toward the nearest target
+      and return a "walking ... retry next turn" result. build_ghosts no longer
+      revives ghosts out of reach (ghost revive ignores character distance), and
+      steps aside by walking when the character stands on a ghost.
+    - pickup only collects ground items within reach.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.0
+Date: 2026-10-30
+  Changes:
+    - BREAKING: move, goto and return_home no longer teleport. They start a
+      walk (scripts/movement.lua) that the character completes over the
+      following ticks; the outcome (arrived / blocked / timeout) is appended to
+      the next turn's action results. goto keeps its name and parameters.
+      Prompts that assumed instant arrival must check the result next turn.
+  Features:
+    - AIMovement: asynchronous straight-line walking driven from on_tick
+      (also while autonomy is disabled). No pathfinding; a blocked walk fails
+      after ~45 ticks without progress instead of waiting for the timeout.
+---------------------------------------------------------------------------------------------------
 Version: 0.4.2
 Date: 2026-08-29
   Features:

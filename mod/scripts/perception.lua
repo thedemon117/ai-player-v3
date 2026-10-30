@@ -85,9 +85,9 @@ end
 local function get_input_contents(entity)
   local define
   if entity.type == "furnace" then
-    define = defines.inventory.furnace_source
+    define = (defines.inventory.furnace_source or defines.inventory.crafter_input)
   else
-    define = defines.inventory.assembling_machine_input
+    define = (defines.inventory.assembling_machine_input or defines.inventory.crafter_input)
   end
   local ok, inv = pcall(function() return entity.get_inventory(define) end)
   if ok and inv then return summarize_inventory(inv, 5) end
@@ -570,7 +570,7 @@ function AIPerception.gather(character)
 
   -- Human-placed entity-ghosts = explicit build intent (build_ghosts skill).
   -- Search the ENTIRE surface: ghosts can be far from the character (e.g. an oil
-  -- outpost the human blueprinted 200+ tiles away). build_ghosts teleports there.
+  -- outpost the human blueprinted 200+ tiles away). build_ghosts walks there.
   local ghost_entities = surface.find_entities_filtered{type = "entity-ghost"}
   local ghost_list = {}
   for _, g in ipairs(ghost_entities) do

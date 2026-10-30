@@ -110,6 +110,20 @@ data:extend({
   },
   {
     type = "bool-setting",
+    name = "ai-player-fog-of-war",
+    setting_type = "runtime-global",
+    default_value = false,
+    order = "m2"
+  },
+  {
+    type = "bool-setting",
+    name = "ai-player-enforce-blueprint-provenance",
+    setting_type = "runtime-global",
+    default_value = false,
+    order = "m3"
+  },
+  {
+    type = "bool-setting",
     name = "ai-player-debug-chat",
     setting_type = "runtime-global",
     default_value = false,

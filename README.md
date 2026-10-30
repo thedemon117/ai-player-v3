@@ -210,8 +210,21 @@ Skills are the primary interface between the LLM and the game. The LLM picks a s
 | `research` | `tech` _(optional)_ | Queues a technology; auto-picks the next logical tech if `tech` is omitted. |
 | `loot_chests` | _(none)_ | Pulls items from nearby chests into the AI's inventory. |
 | `deposit_to_chest` | _(none)_ | Deposits excess inventory items into nearby chests. |
-| `return_home` | _(none)_ | Teleports back to the AI's base anchor point. |
-| `goto` | `position` | Teleports to `{"x": N, "y": N}` for manual positioning. |
+| `build_plan` | `steps` | Places up to 100 entities from `[{item, position, direction?, recipe?, insert?}]`; builds what is in reach, walks toward the next step and returns — call again to continue. |
+| `launch_rocket` | _(optional `position`)_ | Walks to the nearest rocket silo and launches its finished rocket; fails with the parts count until it is built. |
+| `equip` | _(optional `gun`, `ammo`, `armor`)_ | Moves those items from the inventory into the gun / ammo / armor slots (ammo tops up one stack). Creates nothing. |
+| `supply_turrets` | `ammo` _(optional `per_turret`, `radius`)_ | Loads ammo from the inventory into nearby gun turrets below `per_turret` rounds; walks to the nearest one out of reach. |
+| `drive_to` | `position` _(optional `arrive_within`)_ | Walks to the nearest free car (≤30 tiles), fuels it from the inventory and drives it to the point; asynchronous, fails honestly when stuck or out of fuel. |
+| `exit_vehicle` | _(none)_ | Gets out of the car. |
+| `cancel_research` | `tech` | Removes a queued, not-yet-started technology; the one in progress is refused. |
+| `set_train_schedule` | `train_id`, `stops` | Sets a train's schedule (`[{station, wait: full\|empty\|seconds}]`) and automatic mode; warns when no locomotive has fuel. |
+| `queue_jobs` / `cancel_jobs` | `steps` _(optional `on_fail`)_ | Runs a list of skill entries one after another in the background (waits out walks/drives, re-runs skills that ask to be called again); `job_status` shows progress. |
+| `platform_build` / `platform_deconstruct` / `platform_configure` | `platform` + steps / area / `x,y` | Space Age: ghosts on a platform (the hub builds them from its inventory), removal, recipe/filters/direction of one building. |
+| `platform_requests` / `landing_pad_requests` / `chest_requests` | `items` _(+ platform or `x,y`)_ | Set what the hub, a cargo landing pad or a requester chest asks for. |
+| `platform_schedule` / `drop_to_planet` | `platform` + `stops` / _(optional `position`)_ | Platform schedule and pause; ride a cargo pod down to the planet the platform is parked at. |
+| `order_platform` | `name` | Space Age: orders a space platform above the current planet. |
+| `return_home` | _(none)_ | Starts walking back to the AI's base anchor point (asynchronous; takes game time). |
+| `goto` | `position` | Starts walking to `{"x": N, "y": N}`. Straight-line walk over the following ticks; the outcome (`arrived`/`blocked`/`timeout`) is reported in the next action results. |
 
 Primitive actions (`place`, `mine`, `craft`, `insert`, `take`, `chat`, `wait`, …) are available as a fallback for operations no skill covers.
 
@@ -242,7 +255,7 @@ It uses the same `bridge/.env` credentials as the bridge — no extra configurat
 
 **Tools exposed:**
 - **Read state:** `get_factory_state`, `get_research`, `get_players`, `entities_near`, `list_surfaces`, `get_tick`, …
-- **Queries** (run inside the mod, reusing its perception code): `get_recipe` (ingredients/products/craft time), `get_resource_patch` (patch bbox + total), `can_place` / `nearest_buildable` (placement planning), `inspect_entity` (perception-grade detail of any entity), `get_enemies` (threat summary), `get_character_state` (walking/mining state + the hand-crafting queue)
+- **Queries** (run inside the mod, reusing its perception code): `get_recipe` (ingredients/products/craft time), `get_resource_patch` (patch bbox + total), `can_place` / `nearest_buildable` (placement planning), `inspect_entity` (perception-grade detail of any entity), `get_enemies` (threat summary), `analyze_factory` (stuck machines grouped by problem, with missing ingredients), `map_warnings` (whole-surface punch list of problem machines), `production_stats` (item/fluid production & consumption rates over a window), `list_technologies` (tech tree: status, prerequisites, bill, trigger actions, queue), `battle_report` (damaged entities, dry turrets, enemy clusters by distance), `silo_status` / `platforms` (rocket silo progress and recorded launches; Space Age platforms), `map_view` (character-grid map around the character with legend; `to` traces the straight walking line and names the first obstacle) / `area_snapshot` (JSON for `tools/lpf` `render-area`), `layout_context` (belts, drills and what their output lands on), `map_overview` (resource patches, water, forests, enemy bases as chunk groups), `alerts` (in-game alert panel; needs a player), `find_buildable_area` (nearest clear rectangle), `describe_prototype` (sizes, energy, offsets, fluid connections by name), `route_belt` / `route_pipe` (A* belt and pipe routing to build_plan steps), `list_registered_blueprints` (blueprint provenance registry), `trace_belt` (follow a belt line: legs, lane fill, ends, feeders), `list_trains`, `belt_line` / `inserter_at` / `power_report` (wiring diagnostics: belt gaps and lanes, resolved inserter pickup/drop, power-network islands), `get_character_state` (walking/mining state + the hand-crafting queue)
 - **Skills:** `gather`, `build_miner`, `build_smelter`, `build_ghosts`, `deconstruct`, `loot_chests`, `deposit_to_chest`, `research`, `return_home`, `fuel_all`
 - **Primitives** (surgical one-off actions, same handlers the bridge LLM uses): `place_entity`, `mine_entity`, `craft_item`, `set_recipe`, `insert_items`, `take_items`, `say`
 - **Lifecycle & modes:** `spawn_ai_player`, `remove_ai_player`, `set_coop`, `set_autonomy`, `server_status`

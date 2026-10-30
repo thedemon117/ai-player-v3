@@ -5,11 +5,21 @@
 
 require("scripts.character")
 require("scripts.registry")
+require("scripts.movement")
+require("scripts.driving")
+require("scripts.belts")
+require("scripts.bp_registry")
+require("scripts.route.api")
+require("scripts.spatial")
+require("scripts.space")
+require("scripts.jobs")
+require("scripts.vision")
 require("scripts.perception")
 require("scripts.primitives")
 require("scripts.queries")
 require("scripts.brain")
 require("scripts.skills")
+require("scripts.triggers")
 
 -- -------------------------------------------------------------------------
 -- Remote interface — lets an external MCP/RCON client invoke a skill against
@@ -31,6 +41,60 @@ remote.add_interface("ai_player", {
     entry.skill = skill
     local ok, detail = AISkills.run(character, entry)
     return { ok = ok, detail = detail or "" }
+  end,
+  -- Toggle the fog-of-war runtime setting (same as the Mod settings screen), so
+  -- an external harness can switch it without a restart.
+  set_fog_of_war = function(enabled)
+    settings.global["ai-player-fog-of-war"] = {value = enabled and true or false}
+    return { fog_of_war = AIVision.enabled() }
+  end,
+  -- Walk in progress (nil when idle) and the outcome of the last finished walk.
+  -- Blueprint provenance (scripts/bp_registry.lua). With the setting on,
+  -- import_blueprint only accepts layouts exported or registered in this run.
+  set_blueprint_provenance = function(enabled)
+    settings.global["ai-player-enforce-blueprint-provenance"] = {value = enabled and true or false}
+    return { enforced = AIBPRegistry.enforced() }
+  end,
+  -- Record a blueprint string as made during the run (a layout compiler's
+  -- output, e.g. tools/lpf plan-to-blueprint). params = {string, source, note?}.
+  register_blueprint = function(params)
+    local p = params or {}
+    if type(p.string) ~= "string" or #p.string < 10 or type(p.source) ~= "string" or p.source == "" then
+      return { ok = false, detail = "register_blueprint needs string and source" }
+    end
+    local inv = game.create_inventory(1)
+    local ok, res = pcall(function()
+      local stack = inv[1]
+      if stack.import_stack(p.string) == 1 or not stack.valid_for_read or not stack.is_blueprint then
+        error("not a single valid blueprint string")
+      end
+      return AIBPRegistry.register(stack, {source = p.source, note = p.note})
+    end)
+    inv.destroy()
+    if not ok then return { ok = false, detail = tostring(res) } end
+    return { ok = true, key_hash = res.key_hash, entity_count = res.entity_count, already_registered = res.already_registered }
+  end,
+  drive_status = function()
+    return { driving = AIDriving.status(), last = storage.ai_player and storage.ai_player.drive_result }
+  end,
+  walk_status = function()
+    return { walking = AIMovement.status(), last = storage.ai_player and storage.ai_player.walk_result }
+  end,
+  -- Trigger-technology diagnostics: the hand-craft ledger plus every pending
+  -- trigger tech and the exact action that completes it.
+  trigger_status = function()
+    local force = game.forces[storage.ai_player.force_name]
+    local pending = {}
+    for name, tech in pairs(force.technologies) do
+      if tech.enabled and not tech.researched and tech.prototype.research_trigger then
+        local met = true
+        for _, p in pairs(tech.prerequisites) do if not p.researched then met = false end end
+        if met then
+          pending[#pending + 1] = { tech = name, need = AITriggers.describe(tech.prototype.research_trigger) }
+        end
+      end
+    end
+    return { hand_crafted = storage.ai_player.hand_crafted or {}, pending = pending }
   end,
   -- Discovery: sorted list of valid skill names.
   list_skills = function()
@@ -133,6 +197,10 @@ remote.add_interface("ai_player", {
       e.destroy()
       return { ok = false, detail = "string is a blueprint book, not a single blueprint (import_err=" .. tostring(err) .. ")" }
     end
+    if AIBPRegistry.enforced() and not AIBPRegistry.is_registered((AIBPRegistry.key_of(e.stack))) then
+      e.destroy()
+      return { ok = false, detail = AIBPRegistry.REFUSAL }
+    end
     -- Attempt 1: build_blueprint (Factorio 1.x API — may be broken/changed in 2.0)
     local gs = e.stack.build_blueprint{
       surface = s, force = f,
@@ -205,6 +273,8 @@ remote.add_interface("ai_player", {
       include_station_names = true, include_trains = true, include_fuel = true,
     }
     local str = e.stack.export_stack()
+    -- every string handed out was made in this run: record it before it leaves
+    pcall(AIBPRegistry.register, e.stack, {source = "export"})
     e.destroy()
     if not str or str == "" then
       return { ok = false, detail = "export_stack returned empty" }
@@ -227,12 +297,18 @@ local function init_storage()
   s.force_name       = s.force_name or "player"
   s.tick_counter     = s.tick_counter or 0
   s.pending_requests = s.pending_requests or {}
+  -- Hand-craft ledger for trigger technologies (see scripts/triggers.lua):
+  -- begin_crafting by a player-less character never reaches production
+  -- statistics, so the mod tallies it here instead.
+  s.hand_crafted     = s.hand_crafted or {}
   s.chat_log         = s.chat_log or {}
   s.respawn_tick     = s.respawn_tick or nil
   s.map_tag          = s.map_tag or nil
   s.memory           = s.memory or AIBrain.init_memory()
   s.machines         = s.machines or {}   -- registry.lua: unit_number -> LuaEntity
   s.last_reconcile_tick = s.last_reconcile_tick or 0
+  s.walk             = s.walk or nil      -- movement.lua: walk in progress
+  s.walk_result      = s.walk_result or nil
   -- Autonomous on_tick decision loop on by default; an external harness can
   -- disable it (set_autonomy) so it doesn't contend with skill calls. The
   -- `~= false` keeps an explicit false across re-init instead of resetting it.
@@ -431,11 +507,28 @@ script.on_event(defines.events.on_tick, function(event)
     AIRegistry.reconcile(game.surfaces["nauvis"], game.forces[storage.ai_player.force_name])
   end
 
+  -- Trigger technologies. The engine only credits these from player actions, and
+  -- the AI character has no LuaPlayer, so hand-crafted triggers (notably
+  -- automation-science-pack = "craft 1 lab") would stall the whole tech tree.
+  -- AITriggers re-derives each condition from production statistics / entity
+  -- counts, so a tech completes only when the force genuinely earned it.
+  AITriggers.on_tick(tick, game.forces[storage.ai_player.force_name])
+
   -- Auto-respawn
   if storage.ai_player.respawn_tick and tick >= storage.ai_player.respawn_tick then
     storage.ai_player.respawn_tick = nil
     AICharacter.spawn_ai_player()
   end
+
+  -- Keep an in-progress walk going. Before the autonomy gate below: an external
+  -- harness driving skills with autonomy off still needs its walks to advance.
+  AIMovement.step()
+  AIDriving.step()
+  AIJobs.step()
+
+  -- Exploration bookkeeping for the optional fog of war (cheap; recorded even
+  -- while the setting is off so it can be enabled mid-game).
+  if tick % 30 == 0 then AIVision.update(AICharacter.get_character()) end
 
   -- Expire stale pending requests
   AIBrain.process_pending(tick)
@@ -466,6 +559,33 @@ end)
 -- -------------------------------------------------------------------------
 -- Character death
 -- -------------------------------------------------------------------------
+
+-- -------------------------------------------------------------------------
+-- Rocket launches — the end of a run. Recorded in storage.ai_player.launches
+-- (read back by the silo_status query) and announced in chat.
+-- -------------------------------------------------------------------------
+script.on_event(defines.events.on_script_path_request_finished, AIMovement.on_path)
+
+script.on_event(defines.events.on_rocket_launched, function(event)
+  if not storage.ai_player then return end
+  local silo = event.rocket_silo
+  local cargo = {}
+  local ok, inv = pcall(function() return event.rocket.cargo_pod.get_inventory(defines.inventory.cargo_unit) end)
+  if ok and inv then
+    for i = 1, #inv do
+      local st = inv[i]
+      if st.valid_for_read then cargo[st.name] = (cargo[st.name] or 0) + st.count end
+    end
+  end
+  local launches = storage.ai_player.launches or {}
+  storage.ai_player.launches = launches
+  launches[#launches + 1] = {
+    tick = event.tick,
+    silo = silo and silo.valid and {x = silo.position.x, y = silo.position.y} or nil,
+    cargo = cargo,
+  }
+  game.print(string.format("[AI] ROCKET LAUNCHED at tick %d", event.tick), {r = 1, g = 0.9, b = 0.3})
+end)
 
 script.on_event(defines.events.on_entity_died, function(event)
   if not storage.ai_player then return end

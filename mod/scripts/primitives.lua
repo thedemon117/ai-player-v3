@@ -50,9 +50,9 @@ local function get_inventory_by_slot(entity, slot_name)
     -- Factorio 2.0.32: crafter_input/crafter_output do NOT exist.
     -- Use type-specific defines: furnace_source for furnaces, assembling_machine_input for assemblers.
     if entity.type == "furnace" then
-      return entity.get_inventory(defines.inventory.furnace_source)
+      return entity.get_inventory((defines.inventory.furnace_source or defines.inventory.crafter_input))
     else
-      return entity.get_inventory(defines.inventory.assembling_machine_input)
+      return entity.get_inventory((defines.inventory.assembling_machine_input or defines.inventory.crafter_input))
     end
 
   elseif s == "output" then
@@ -71,10 +71,10 @@ local function get_inventory_by_slot(entity, slot_name)
     -- Unknown slot name: guess based on entity type using type-specific defines.
     -- defines.inventory.crafter_input does NOT exist in Factorio 2.0.32.
     if entity.type == "furnace" then
-      local inv = entity.get_inventory(defines.inventory.furnace_source)
+      local inv = entity.get_inventory((defines.inventory.furnace_source or defines.inventory.crafter_input))
       if inv then return inv end
     elseif entity.type == "assembling-machine" then
-      local inv = entity.get_inventory(defines.inventory.assembling_machine_input)
+      local inv = entity.get_inventory((defines.inventory.assembling_machine_input or defines.inventory.crafter_input))
       if inv then return inv end
     end
     return entity.get_inventory(defines.inventory.chest)
@@ -178,7 +178,7 @@ local function action_move(character, action)
     return
   end
   -- Cap per-move distance to curb rapid wandering (the home anchor + prompt do
-  -- the rest). A single teleport never exceeds 16 tiles.
+  -- the rest). A single move never exceeds 16 tiles.
   local dist = math.max(1, math.min(action.distance or 10, 16))
   local offsets = {
     [defines.direction.north]     = {x=0,        y=-1},
@@ -206,11 +206,12 @@ local function action_move(character, action)
 
   if not best then
     debug_print("move " .. action.direction .. ": all tiles blocked, not moving")
-    return
+    return false, "move " .. action.direction .. ": blocked, not moving"
   end
 
-  character.teleport(best)
-  debug_print(string.format("Moved %s to {%.1f, %.1f}", action.direction, best.x, best.y))
+  local ok, detail = AIMovement.walk_to(character, best)
+  debug_print(string.format("Move %s toward {%.1f, %.1f}: %s", action.direction, best.x, best.y, detail))
+  return ok, detail
 end
 
 local function action_mine(character, action)
@@ -324,6 +325,7 @@ local function action_place(character, action)
     direction = dir,
     force     = character.force,
     player    = nil,
+    type      = action.underground_type,   -- "input"/"output" for underground belts, else nil
   }
 
   if entity then
@@ -364,6 +366,9 @@ local function action_craft(character, action)
   if not action.recipe then return false, "craft: missing recipe" end
   local count = action.count or 1
   local queued = character.begin_crafting{recipe=action.recipe, count=count}
+  -- Hand-crafting is invisible to production statistics for a player-less
+  -- character; record it so trigger technologies can still be earned.
+  AITriggers.on_crafted(action.recipe, queued)
   if queued > 0 then
     debug_print(string.format("Crafting %d x %s (queued: %d)", count, action.recipe, queued))
     return true, string.format("started hand-crafting %d x %s", queued, action.recipe)
@@ -480,7 +485,7 @@ local function action_pickup(character, action)
   local picked = 0
   local inv = character.get_inventory(defines.inventory.character_main)
   for _, item_entity in ipairs(items) do
-    if item_entity.valid then
+    if item_entity.valid and character.can_reach_entity(item_entity) then
       local stack = item_entity.stack
       if inv and inv.can_insert(stack) then
         inv.insert(stack)
