@@ -570,7 +570,7 @@ function AIPerception.gather(character)
 
   -- Human-placed entity-ghosts = explicit build intent (build_ghosts skill).
   -- Search the ENTIRE surface: ghosts can be far from the character (e.g. an oil
-  -- outpost the human blueprinted 200+ tiles away). build_ghosts teleports there.
+  -- outpost the human blueprinted 200+ tiles away). build_ghosts walks there.
   local ghost_entities = surface.find_entities_filtered{type = "entity-ghost"}
   local ghost_list = {}
   for _, g in ipairs(ghost_entities) do

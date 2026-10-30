@@ -1,4 +1,15 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.1
+Date: 2026-10-30
+  Changes:
+    - BREAKING: gather, deconstruct and build_ghosts no longer teleport to their
+      targets. They act only on targets within character reach
+      (can_reach_entity, build_distance for ghosts); otherwise they start a walk toward the nearest target
+      and return a "walking ... retry next turn" result. build_ghosts no longer
+      revives ghosts out of reach (ghost revive ignores character distance), and
+      steps aside by walking when the character stands on a ghost.
+    - pickup only collects ground items within reach.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.0
 Date: 2026-10-30
   Changes:

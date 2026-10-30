@@ -42,9 +42,17 @@ local function skill_gather(character, p)
       end
     end
     if not src then break end
-    -- Teleport adjacent so the source is within mining reach, then mine.
-    local sp = surface.find_non_colliding_position("character", src.position, 3, 0.5)
-    if sp then character.teleport(sp) end
+    -- Out of mining reach: walk there (takes game time) instead of mining at a
+    -- distance. Report what we already gathered; the caller retries next turn.
+    if not character.can_reach_entity(src) then
+      local sp = surface.find_non_colliding_position("character", src.position, 3, 0.5) or src.position
+      local _, walk = AIMovement.walk_to(character, sp)
+      if gained > 0 then
+        return true, string.format("gathered %d %s (now have %d); next source out of reach — %s",
+          gained, item, inv.get_item_count(item), walk)
+      end
+      return false, "gather: " .. item .. " out of reach — " .. walk .. "; retry gather next turn"
+    end
     local before = inv.get_item_count()
     character.mine_entity(src, true)
     local delta = inv.get_item_count() - before
@@ -327,58 +335,52 @@ end
 -- build_ghosts() — build the human's placed entity-ghosts (validated mechanic).
 -- Highest-priority skill: ghosts are explicit human intent.
 -- -------------------------------------------------------------------------
+-- can_reach_entity() is always true for ghosts (it only gates ghost PLACEMENT),
+-- so reviving one has to be checked against the character's build distance.
+local function ghost_in_reach(character, ghost)
+  local dx, dy = ghost.position.x - character.position.x, ghost.position.y - character.position.y
+  return dx * dx + dy * dy <= character.build_distance * character.build_distance
+end
+
 local function skill_build_ghosts(character, _)
   local surface = character.surface
   local inv = inv_of(character)
   -- Search the ENTIRE surface — ghosts may be far from the character's current
-  -- position (e.g. an oil outpost blueprinted 200+ tiles away). We teleport to
-  -- the nearest ghost cluster before attempting revive.
+  -- position (e.g. an oil outpost blueprinted 200+ tiles away). Only ghosts
+  -- within the character's reach are revived; if none are, walk toward the
+  -- nearest buildable one and let the caller retry next turn.
   local ghosts = surface.find_entities_filtered{type = "entity-ghost"}
   if #ghosts == 0 then return false, "build_ghosts: no ghosts on surface to build" end
 
-  -- Find nearest ghost so we can teleport to it.
-  local nearest, nd = nil, math.huge
-  for _, g in ipairs(ghosts) do
-    if g.valid then
-      local dx = g.position.x - character.position.x
-      local dy = g.position.y - character.position.y
-      local d = dx * dx + dy * dy
-      if d < nd then nd = d; nearest = g end
-    end
-  end
-  if nearest then
-    -- Teleport to a spot near the nearest ghost cluster so revive() can fire.
-    local tp = surface.find_non_colliding_position(
-      "character", {x = nearest.position.x + 3, y = nearest.position.y + 3}, 12, 0.5)
-    if tp then character.teleport(tp) end
-  end
+  local cp = character.position
+  table.sort(ghosts, function(a, b)
+    local dax, day = a.position.x - cp.x, a.position.y - cp.y
+    local dbx, dby = b.position.x - cp.x, b.position.y - cp.y
+    return (dax * dax + day * day) < (dbx * dbx + dby * dby)
+  end)
 
   local built = 0
   local missing = {}
+  local far = nil        -- nearest buildable ghost that is out of reach
+  local in_the_way = nil -- reachable ghost whose revive failed (character on it?)
   for _, g in ipairs(ghosts) do
     if g.valid then
       local proto = prototypes.entity[g.ghost_name]
       local item = proto and proto.items_to_place_this and proto.items_to_place_this[1]
         and proto.items_to_place_this[1].name
       if item and inv.get_item_count(item) > 0 then
-        -- NB: do NOT teleport the character to the ghost first. Ghosts have no
-        -- collision box, so find_non_colliding_position returns the ghost's own
-        -- tile; teleporting there makes the CHARACTER block the spot and revive()
-        -- fails. revive() is a force-level op and needs no character reach.
-        local _, ent = g.revive{raise_revive = false}
-        if not (ent and ent.valid) then
-          -- The character may be standing ON this ghost (e.g. its home tile).
-          -- Step aside to a spot clear of the ghost footprint and retry once.
-          local aside = surface.find_non_colliding_position(
-            "character", {x = g.position.x + 3, y = g.position.y + 3}, 8, 0.5)
-          if aside then
-            character.teleport(aside)
-            _, ent = g.revive{raise_revive = false}
+        if not ghost_in_reach(character, g) then
+          far = far or g
+        else
+          -- Ghosts have no collision box, so the CHARACTER standing on one makes
+          -- revive() fail; remember it and step aside below.
+          local _, ent = g.revive{raise_revive = false}
+          if ent and ent.valid then
+            inv.remove{name = item, count = 1}
+            built = built + 1
+          else
+            in_the_way = in_the_way or g
           end
-        end
-        if ent and ent.valid then
-          inv.remove{name = item, count = 1}
-          built = built + 1
         end
       elseif item then
         missing[item] = (missing[item] or 0) + 1
@@ -390,7 +392,24 @@ local function skill_build_ghosts(character, _)
   for it, c in pairs(missing) do parts[#parts + 1] = c .. "x " .. it end
   local detail = string.format("built %d ghost(s)", built)
   if #parts > 0 then detail = detail .. "; need items: " .. table.concat(parts, ", ") end
-  if built == 0 and #parts == 0 then return false, "build_ghosts: no buildable ghosts" end
+
+  if in_the_way then
+    local aside = surface.find_non_colliding_position(
+      "character", {x = in_the_way.position.x + 3, y = in_the_way.position.y + 3}, 8, 0.5)
+    if aside then
+      local _, walk = AIMovement.walk_to(character, aside)
+      detail = detail .. "; a ghost is blocked (character in the way) — " .. walk
+    end
+  elseif far then
+    local near = surface.find_non_colliding_position(
+      "character", {x = far.position.x + 3, y = far.position.y + 3}, 12, 0.5) or far.position
+    local _, walk = AIMovement.walk_to(character, near)
+    detail = detail .. "; more ghosts out of reach — " .. walk .. "; retry build_ghosts next turn"
+  end
+
+  if built == 0 and #parts == 0 and not far and not in_the_way then
+    return false, "build_ghosts: no buildable ghosts"
+  end
   return true, detail
 end
 
@@ -398,9 +417,8 @@ end
 -- deconstruct() — mine everything the human marked for deconstruction
 -- (buildings, trees, rocks). SECOND priority after build_ghosts: a
 -- deconstruction mark is explicit human "remove this" intent, the mirror of a
--- ghost. Unlike ghosts/ore, these targets HAVE collision, so teleporting
--- adjacent (the gather pattern) is safe — find_non_colliding_position lands the
--- character beside the target, not on it, and mine_entity collects the products.
+-- ghost. Targets must be within reach; otherwise the character walks toward the
+-- nearest one and the caller retries next turn.
 -- -------------------------------------------------------------------------
 local function skill_deconstruct(character, p)
   local surface = character.surface
@@ -426,8 +444,15 @@ local function skill_deconstruct(character, p)
       if not m.minable then
         skipped = skipped + 1
       else
-        local sp = surface.find_non_colliding_position("character", m.position, 3, 0.5)
-        if sp then character.teleport(sp) end
+        if not character.can_reach_entity(m) then
+          -- Out of reach: walk there and let the caller retry next turn.
+          local sp = surface.find_non_colliding_position("character", m.position, 3, 0.5) or m.position
+          local _, walk = AIMovement.walk_to(character, sp)
+          if removed > 0 then
+            return true, string.format("deconstructed %d marked object(s); next one out of reach — %s", removed, walk)
+          end
+          return false, "deconstruct: target out of reach — " .. walk .. "; retry deconstruct next turn"
+        end
         local ok = character.mine_entity(m, true)
         if ok and not m.valid then
           removed = removed + 1

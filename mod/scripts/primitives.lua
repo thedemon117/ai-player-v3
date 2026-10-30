@@ -481,7 +481,7 @@ local function action_pickup(character, action)
   local picked = 0
   local inv = character.get_inventory(defines.inventory.character_main)
   for _, item_entity in ipairs(items) do
-    if item_entity.valid then
+    if item_entity.valid and character.can_reach_entity(item_entity) then
       local stack = item_entity.stack
       if inv and inv.can_insert(stack) then
         inv.insert(stack)
